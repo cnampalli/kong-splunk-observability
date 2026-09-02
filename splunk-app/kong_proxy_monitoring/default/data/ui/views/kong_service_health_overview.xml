@@ -2,6 +2,13 @@
   <label>Kong Proxy - Service Health Overview</label>
   <description>Golden signals for vault-svc and admin-api, with Kong-vs-upstream error attribution. Start here during an incident. Every panel is built on the `kong_base` macro.</description>
 
+  <!-- Inputs use static choices, not population searches.
+       A populated dropdown costs a full `kong_base` scan over the selected
+       time range on every page load - for a topology of two services and four
+       routes that is a lot of I/O to render six words. It also hides a route
+       that has gone silent, which is exactly the route you would be looking
+       for. Static choices are free and always complete.
+       Adding a route to Kong? Add one <choice> line here. -->
   <fieldset submitButton="false" autoRun="true">
     <input type="time" token="tr">
       <label>Time range</label>
@@ -13,30 +20,24 @@
     <input type="dropdown" token="svc" searchWhenChanged="true">
       <label>Service</label>
       <choice value="*">All services</choice>
+      <choice value="vault-svc">vault-svc</choice>
+      <choice value="admin-api">admin-api</choice>
+      <choice value="(no-service)">(no service matched)</choice>
       <default>*</default>
       <initialValue>*</initialValue>
-      <fieldForLabel>service</fieldForLabel>
-      <fieldForValue>service</fieldForValue>
-      <search>
-        <query>`kong_base` | stats count by service | sort - count</query>
-        <earliest>$tr.earliest$</earliest>
-        <latest>$tr.latest$</latest>
-      </search>
       <prefix>service="</prefix>
       <suffix>"</suffix>
     </input>
     <input type="dropdown" token="rt" searchWhenChanged="true">
       <label>Route</label>
       <choice value="*">All routes</choice>
+      <choice value="auth-route">auth-route</choice>
+      <choice value="generic-route">generic-route</choice>
+      <choice value="ee-smp-functests">ee-smp-functests</choice>
+      <choice value="admin-route">admin-route</choice>
+      <choice value="(no-route-matched)">(no route matched)</choice>
       <default>*</default>
       <initialValue>*</initialValue>
-      <fieldForLabel>route</fieldForLabel>
-      <fieldForValue>route</fieldForValue>
-      <search>
-        <query>`kong_base` | search $svc$ | stats count by route | sort - count</query>
-        <earliest>$tr.earliest$</earliest>
-        <latest>$tr.latest$</latest>
-      </search>
       <prefix>route="</prefix>
       <suffix>"</suffix>
     </input>
@@ -226,7 +227,7 @@
                <prefix>route="</prefix> and applies it on arrival - sending a
                pre-wrapped route="x" here would arrive as route="route="x"".
                |u URL-encodes, which matters for the @ in time modifiers. -->
-          <link target="_blank">/app/kong_proxy_monitoring/kong_route_deep_dive?form.rt=$row.route|u$&amp;form.tr.earliest=$tr.earliest|u$&amp;form.tr.latest=$tr.latest|u$</link>
+          <link target="_blank">/app/kong_proxy_monitoring/kong_route_latency?form.rt=$row.route|u$&amp;form.svc=$row.service|u$&amp;form.tr.earliest=$tr.earliest|u$&amp;form.tr.latest=$tr.latest|u$</link>
         </drilldown>
       </table>
     </panel>

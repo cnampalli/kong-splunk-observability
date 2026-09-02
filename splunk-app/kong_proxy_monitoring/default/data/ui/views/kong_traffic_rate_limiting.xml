@@ -10,18 +10,19 @@
         <latest>now</latest>
       </default>
     </input>
+    <!-- Static choices: a population search would cost a full kong_base scan
+         per page load to render four words, and would hide a route that had
+         gone silent. Add a <choice> line if the topology changes. -->
     <input type="dropdown" token="rt" searchWhenChanged="true">
       <label>Route</label>
       <choice value="*">All routes</choice>
+      <choice value="auth-route">auth-route</choice>
+      <choice value="generic-route">generic-route</choice>
+      <choice value="ee-smp-functests">ee-smp-functests</choice>
+      <choice value="admin-route">admin-route</choice>
+      <choice value="(no-route-matched)">(no route matched)</choice>
       <default>*</default>
       <initialValue>*</initialValue>
-      <fieldForLabel>route</fieldForLabel>
-      <fieldForValue>route</fieldForValue>
-      <search>
-        <query>`kong_base` | stats count by route | sort - count</query>
-        <earliest>$tr.earliest$</earliest>
-        <latest>$tr.latest$</latest>
-      </search>
       <prefix>route="</prefix>
       <suffix>"</suffix>
     </input>

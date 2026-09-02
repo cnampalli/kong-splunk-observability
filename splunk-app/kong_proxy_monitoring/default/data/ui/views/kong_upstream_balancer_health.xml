@@ -10,18 +10,16 @@
         <latest>now</latest>
       </default>
     </input>
+    <!-- Static choices: a population search would cost a full kong_base scan
+         per page load to render two words, and would hide a service that had
+         gone silent. Add a <choice> line if the topology changes. -->
     <input type="dropdown" token="svc" searchWhenChanged="true">
       <label>Service</label>
       <choice value="*">All services</choice>
+      <choice value="vault-svc">vault-svc</choice>
+      <choice value="admin-api">admin-api</choice>
       <default>*</default>
       <initialValue>*</initialValue>
-      <fieldForLabel>service</fieldForLabel>
-      <fieldForValue>service</fieldForValue>
-      <search>
-        <query>`kong_base` | stats count by service | sort - count</query>
-        <earliest>$tr.earliest$</earliest>
-        <latest>$tr.latest$</latest>
-      </search>
       <prefix>service="</prefix>
       <suffix>"</suffix>
     </input>

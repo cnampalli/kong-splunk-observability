@@ -25,7 +25,7 @@ kong-proxy-splunk/
         │   ├── alert_actions.conf   # Email formatting
         │   └── data/ui/
         │       ├── nav/default.xml
-        │       └── views/           # 6 Simple XML dashboards
+        │       └── views/           # 5 Simple XML dashboards
         └── metadata/default.meta
 ```
 
@@ -49,11 +49,12 @@ No filesystem access (Splunk Cloud)? The dashboards are Simple XML and paste-imp
 | Dashboard | Use it when |
 |---|---|
 | **Service Health Overview** | **Start here in an incident.** Golden signals + Kong-vs-upstream error attribution |
-| **Route Deep Dive** | You know the route, need the detail |
+| **Route and Latency Analysis** | Drilling into a route, or investigating slowness. Works cross-service or single-route from the same page. |
 | **Upstream and Balancer Health** | A backend pod is suspected |
-| **Latency Analysis** | Slow but not failing |
 | **Traffic, Rate Limiting and Clients** | Throttling, or a noisy client |
 | **Security and Tenancy** | Admin API audit, per-namespace, auth operations |
+
+Dropdowns are static `<choice>` lists, not population searches — a populated dropdown costs a full `kong_base` scan on every page load and hides routes that have gone silent. Add a `<choice>` line when you add a route.
 
 ## Alerts
 

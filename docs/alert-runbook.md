@@ -93,7 +93,7 @@ Widen the time range to see whether it stopped abruptly or tapered off. Abrupt u
 
 **Means:** upstream response time p95 exceeded the configured p95 threshold (default 2000 ms) over 10 minutes. Measured on `kong_proxied`, so short-circuited requests are excluded.
 
-**Check:** open Latency Analysis. The key comparison is **Kong overhead vs upstream wait** — if Kong overhead is flat and upstream wait is climbing, the backend is genuinely slow.
+**Check:** open Route and Latency Analysis. The key comparison is **Kong overhead vs upstream wait** — if Kong overhead is flat and upstream wait is climbing, the backend is genuinely slow.
 
 ```spl
 `kong_proxied` | where service=="<service>"

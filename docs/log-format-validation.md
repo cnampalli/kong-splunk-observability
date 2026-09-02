@@ -91,7 +91,7 @@ On 3.4, Kong's reported overhead is plugin/routing time **plus** the time spent 
 
 **Consequence:** a client uploading a large body on a slow link inflates what looks like "Kong overhead" on 3.4. And every threshold tuned on 3.4 will read differently after an upgrade — the same traffic will appear to get faster, because receive time moves to its own field.
 
-**Where this is handled:** Alert 5 in `savedsearches.conf` carries an inline warning to re-tune after upgrading. The Latency Analysis dashboard states it in a banner.
+**Where this is handled:** Alert 5 in `savedsearches.conf` carries an inline warning to re-tune after upgrading. The Route and Latency Analysis dashboard states it in a banner.
 
 ---
 

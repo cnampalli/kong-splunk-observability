@@ -162,13 +162,16 @@ For each XML file in `splunk-app/kong_proxy_monitoring/default/data/ui/views/`:
 | File | Title | Use it when |
 |---|---|---|
 | `kong_service_health_overview.xml` | Service Health Overview | **Start here in an incident.** Golden signals + Kong-vs-upstream attribution |
-| `kong_route_deep_dive.xml` | Route Deep Dive | You know which route is affected and need detail |
+| `kong_route_latency.xml` | Route and Latency Analysis | Drilling into a route, or investigating slowness at any scope |
 | `kong_upstream_balancer_health.xml` | Upstream and Balancer Health | A backend pod is suspected |
-| `kong_latency_analysis.xml` | Latency Analysis | Things are slow but not failing |
 | `kong_traffic_rate_limiting.xml` | Traffic, Rate Limiting and Clients | Throttling, or a noisy client |
 | `kong_security_tenancy.xml` | Security and Tenancy | Admin API audit, per-namespace or auth questions |
 
-The Overview drills through to Route Deep Dive when you click a row in the health matrix. That link assumes the app context `kong_proxy_monitoring`. If you installed the dashboards into a different app, edit the `<link>` element in `kong_service_health_overview.xml` to match your app name.
+Route and Latency Analysis works at two scopes from one page: leave Route on "All routes" for the cross-cutting latency view, or pick a single route to drill in. It replaces what were previously two separate dashboards.
+
+The Overview drills through to it when you click a row in the health matrix, passing both the service and the route. That link assumes the app context `kong_proxy_monitoring` — if you installed into a different app, edit the `<link>` element in `kong_service_health_overview.xml` to match.
+
+> **Dropdowns are static, by design.** They list the two services and four routes as literal `<choice>` entries rather than running a search to discover them. A populated dropdown costs a full `kong_base` scan over the selected time range *on every page load*, which at a 24-hour range on a busy index is real I/O to render six words. Worse, a route with no traffic in the window vanishes from the list — and a silent route is exactly what you would be looking for. **If you add or rename a route in Kong, add a `<choice>` line** to the dashboards that carry a Route selector (`kong_service_health_overview.xml`, `kong_route_latency.xml`, `kong_traffic_rate_limiting.xml`). Unknown traffic still appears in every table regardless, under `(no-route-matched)`.
 
 ---
 
@@ -455,10 +458,11 @@ Sign-off criteria. Tick every box.
 - [ ] `try_count` is never null
 
 **Dashboards**
-- [ ] All six load without a macro or parse error
+- [ ] All five load without a macro or parse error
 - [ ] Service Health Overview populates every panel
-- [ ] Service and Route dropdowns populate from live data
-- [ ] Clicking a row in the health matrix opens Route Deep Dive with the route pre-selected
+- [ ] Dashboards issue no search on page load beyond their own panels (dropdowns are static)
+- [ ] Clicking a row in the health matrix opens Route and Latency Analysis with the route and service pre-selected
+- [ ] Route and Service dropdowns list every route and service in your Kong config
 
 **Alerts**
 - [ ] Mail server configured and test email received
