@@ -112,6 +112,7 @@ Settings → Advanced search → Search macros → New Search Macro. For each, s
 | `kong_base` | **The foundation.** Normalises every field trap. |
 | `kong_proxied` | `kong_base` filtered to requests that reached the upstream. Use for all latency stats. |
 | `kong_min_requests` | `50` — minimum volume before a ratio alert may fire. Used by four alerts. |
+| `kong_topology_source` | Where dropdowns get their service/route list. **Swap this one macro to switch between the KV Store collection and a live search** — see [section 4.1](#41-create-the-topology-collection). |
 | `kong_admin_service` | Which service fronts the Admin API. See [section 5](#5-install-the-dashboards). |
 | `kong_auth_route` | Which route handles Vault auth. |
 | `kong_ratelimited_route` | Which route carries the rate-limiting plugin. |
@@ -151,17 +152,58 @@ Then confirm the normalisation actually worked:
 
 ### 4.1 Create the topology collection
 
-The dashboards populate their Service and Route dropdowns from a KV Store collection instead of scanning the index on every page load. Set it up before installing the dashboards, or every dropdown will be empty.
+The dashboards populate their Service and Route dropdowns from a KV Store collection instead of scanning the index on every page load.
 
-**Path A (app deploy):** `collections.conf` and `transforms.conf` ship with the app. Nothing to create — skip to the "run it once" step.
+> ### Splunk Web cannot create a KV Store collection
+>
+> This is the single most likely thing to go wrong, so read it before doing anything. Creating a "KV Store lookup" through **Settings → Lookups → Lookup definitions** creates the lookup **definition** only. It does **not** create the backing collection. Point a definition at a collection that does not exist and every dropdown fails with:
+>
+> ```
+> Lookup failed because collection kong_topology in the search head app
+> does not exist, or user does not have read access.
+> ```
+>
+> A collection can only be created by `collections.conf` (i.e. by installing an app) or by a REST call. Pick one of the three paths below.
 
-**Path B (manual / Splunk Cloud):**
+**Path A — install the app (recommended, and the only fully self-contained option).**
+
+`collections.conf` and `transforms.conf` ship with the app, so the collection is created on restart or reload. Nothing to do here.
+
+**Important:** install the dashboards *into this app too*. A KV Store collection is app-scoped. If the dashboards live in `search` while the collection lives in `kong_proxy_monitoring`, you get the same error even though the collection exists. On Splunk Cloud, upload it as a private app.
+
+**Path B — create the collection by REST, then define the lookup in the UI.**
+
+For a self-managed instance where you can reach the management port:
+
+```bash
+curl -k -u admin:PASSWORD \
+  https://<search-head>:8089/servicesNS/nobody/search/storage/collections/config \
+  -d name=kong_topology \
+  -d field.service=string \
+  -d field.route=string \
+  -d field.requests=number \
+  -d field.last_seen=number
+```
+
+Note `.../servicesNS/nobody/**search**/...` — create it in the app your dashboards live in. Then:
 
 1. Settings → Lookups → Lookup definitions → New. Name `kong_topology`, type **KV Store**, collection `kong_topology`, supported fields `_key, service, route, requests, last_seen`.
-2. The collection itself must exist first. On Splunk Cloud without filesystem access, create it via the REST endpoint `/servicesNS/nobody/kong_proxy_monitoring/storage/collections/config` with name `kong_topology`, or install the app so `collections.conf` is applied.
-3. Permissions: Settings → Lookups → Lookup definitions → Permissions → **All apps**, Read: Everyone, Write: admin/power.
+2. Permissions on the definition → **All apps**, Read: Everyone, Write: admin/power.
 
-**Run it once so the dropdowns populate immediately** rather than at the top of the next hour:
+**Path C — no collection at all.**
+
+If you cannot install an app and cannot reach the REST API, skip the collection entirely. Change one macro:
+
+```
+[kong_topology_source]
+definition = `kong_base` earliest=-24h latest=now | stats count by service, route
+```
+
+Dropdowns are still dynamic — they discover the real topology — but each page load costs one bounded 24-hour scan, and a route with no traffic in that window will not be listed. With this path you do not need `collections.conf`, `transforms.conf`, or the `Kong - Refresh Topology` search at all. Everything else in the pack is unaffected.
+
+---
+
+**If you took Path A or B, run the refresh once** so the dropdowns populate immediately rather than at the top of the next hour:
 
 ```spl
 | savedsearch "Kong - Refresh Topology"
@@ -423,6 +465,32 @@ Attribute every IP to a known workload. Add unexplained ones to the investigatio
 
 The macro is not installed, or not visible from the current app. Check Settings → Advanced search → Search macros, set the filter to "All", and confirm permissions are **Global / All apps**.
 
+### "Lookup failed because collection kong_topology ... does not exist, or user does not have read access"
+
+Affects the Service and Route **dropdowns only** — every panel still works, and the static "All services" / "All routes" choices still render, so the dashboard remains usable while you fix this.
+
+There are two distinct causes. Find out which:
+
+```spl
+| rest /servicesNS/-/-/storage/collections/config
+| search title=kong_topology
+| table title, eai:acl.app, eai:acl.sharing
+```
+
+**No rows — the collection was never created.** Almost always because it was set up through Settings → Lookups, which creates the lookup *definition* but not the collection. Splunk Web cannot create a collection. Fix via [section 4.1](#41-create-the-topology-collection) Path A or B.
+
+**A row, but `eai:acl.app` is not the app your dashboards are in.** KV Store collections are app-scoped, so a collection in `kong_proxy_monitoring` is not reachable from a dashboard saved in `search` — even when the lookup definition is shared globally. Either move the dashboards into the app that owns the collection, or recreate the collection in the app the dashboards live in. Check where a dashboard actually lives with:
+
+```spl
+| rest /servicesNS/-/-/data/ui/views | search title=kong_* | table title, eai:acl.app
+```
+
+**Blocked on both?** Take [section 4.1](#41-create-the-topology-collection) Path C — repoint the `kong_topology_source` macro at its live-search fallback. One edit, no collection required, dropdowns stay dynamic.
+
+### Dropdowns are empty but there is no error
+
+The collection exists but has not been populated. Run `| savedsearch "Kong - Refresh Topology"` once, then check `| inputlookup kong_topology`. If that is still empty, the refresh search returned nothing — confirm `` `kong_base` `` itself returns rows over the last 70 minutes.
+
 ### Dashboards render but every panel is empty
 
 Work backwards:
@@ -511,7 +579,7 @@ Sign-off criteria. Tick every box.
 - [ ] Event timestamps match request times, not a single repeated config-creation date
 
 **Macros**
-- [ ] All seven macros exist with global permissions
+- [ ] All eight macros exist with global permissions
 - [ ] `` `kong_base` | head 5 `` returns rows
 - [ ] `min(proxy_ms)` is not negative
 - [ ] `` `kong_base` | stats count by upstream_status `` shows only 3-digit codes or blank

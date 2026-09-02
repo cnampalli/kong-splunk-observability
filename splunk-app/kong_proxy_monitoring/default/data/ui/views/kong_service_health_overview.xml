@@ -25,7 +25,7 @@
     <input type="dropdown" token="svc" searchWhenChanged="true">
       <label>Service</label>
       <search>
-        <query>| inputlookup kong_topology | stats count by service | sort service</query>
+        <query>`kong_topology_source` | stats count by service | sort service</query>
       </search>
       <fieldForLabel>service</fieldForLabel>
       <fieldForValue>service</fieldForValue>
@@ -39,7 +39,7 @@
     <input type="dropdown" token="rt" searchWhenChanged="true">
       <label>Route</label>
       <search>
-        <query>| inputlookup kong_topology | stats count by route | sort route</query>
+        <query>`kong_topology_source` | stats count by route | sort route</query>
       </search>
       <fieldForLabel>route</fieldForLabel>
       <fieldForValue>route</fieldForValue>

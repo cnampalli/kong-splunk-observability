@@ -17,7 +17,7 @@
     <input type="dropdown" token="rt" searchWhenChanged="true">
       <label>Route</label>
       <search>
-        <query>| inputlookup kong_topology | stats count by route | sort route</query>
+        <query>`kong_topology_source` | stats count by route | sort route</query>
       </search>
       <fieldForLabel>route</fieldForLabel>
       <fieldForValue>route</fieldForValue>

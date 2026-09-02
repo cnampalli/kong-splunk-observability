@@ -21,12 +21,12 @@
          `kong_auth_route` macros in macros.conf, which the equivalent alerts
          use. A Simple XML <default> cannot reference a macro, so the pair has
          to be kept in step by hand - operations-guide.md section 5 lists both
-         in one table. Choices come from the kong_topology collection, so you
+         in one table. Choices come from the `kong_topology_source` macro, so you
          can also just repoint them at runtime. -->
     <input type="dropdown" token="svcfilter" searchWhenChanged="true">
       <label>Admin API service</label>
       <search>
-        <query>| inputlookup kong_topology | stats count by service | sort service</query>
+        <query>`kong_topology_source` | stats count by service | sort service</query>
       </search>
       <fieldForLabel>service</fieldForLabel>
       <fieldForValue>service</fieldForValue>
@@ -39,7 +39,7 @@
     <input type="dropdown" token="rtfilter" searchWhenChanged="true">
       <label>Auth route</label>
       <search>
-        <query>| inputlookup kong_topology | stats count by route | sort route</query>
+        <query>`kong_topology_source` | stats count by route | sort route</query>
       </search>
       <fieldForLabel>route</fieldForLabel>
       <fieldForValue>route</fieldForValue>
