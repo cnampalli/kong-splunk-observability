@@ -1,3 +1,21 @@
+<!--
+  Kong Proxy Monitoring - app navigation
+
+  <view name="..."> matches on the view ID, which is the XML FILENAME without
+  the extension - not the <label> shown in the UI. Creating a dashboard
+  through Splunk Web derives that ID from whatever title you typed, so
+  "Kong Proxy - Traffic, Rate Limiting and Clients" becomes something like
+  kong_proxy___traffic__rate_limiting_and_clients and no longer matches the
+  entry below. The dashboard still works and is still listed under Dashboards
+  - it just silently vanishes from this menu.
+
+  The <view source="unclassified"/> collection at the bottom is the safety
+  net: it renders any view in this app that is not explicitly named above, so
+  a dashboard whose ID drifted still appears rather than disappearing. If a
+  dashboard shows up under "Other views" instead of in its expected place,
+  that is the signal its ID does not match - see operations-guide.md
+  section 8.
+-->
 <nav search_view="search" color="#5CC05C">
   <view name="kong_service_health_overview" default="true"/>
   <view name="kong_route_latency"/>
@@ -6,6 +24,9 @@
   <view name="kong_security_tenancy"/>
   <collection label="Alerts">
     <saved source="all" match="Kong -"/>
+  </collection>
+  <collection label="Other views">
+    <view source="unclassified"/>
   </collection>
   <view name="search"/>
 </nav>

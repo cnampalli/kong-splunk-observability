@@ -236,9 +236,12 @@ You should get one row per live service/route pair.
 For each XML file in `splunk-app/kong_proxy_monitoring/default/data/ui/views/`:
 
 1. Dashboards → Create New Dashboard
-2. Give it the title from the file's `<label>` element, save
-3. Open it → Edit → **Source**
-4. Delete everything, paste the full file contents, Save
+2. Give it the title from the file's `<label>` element
+3. **Before saving, edit the auto-generated Dashboard ID to exactly match the filename without `.xml`** — e.g. `kong_traffic_rate_limiting`. This matters: see the warning below.
+4. Save, then open it → Edit → **Source**
+5. Delete everything, paste the full file contents, Save
+
+> **Set the ID, not just the title.** Splunk derives the Dashboard ID from whatever title you type, so "Kong Proxy - Traffic, Rate Limiting and Clients" becomes `kong_proxy___traffic__rate_limiting_and_clients`. The app's navigation matches on **ID**, not label, so a dashboard with a derived ID still works and still appears under Dashboards — but silently disappears from the app menu. The ID field is editable at creation time and read-only afterwards; renaming later means recreating the dashboard or editing `local.meta`. Punctuation in the title is what usually causes this, which is why the Traffic dashboard (the only label containing a comma) is the one that most often goes missing.
 
 | File | Title | Use it when |
 |---|---|---|
@@ -486,6 +489,29 @@ There are two distinct causes. Find out which:
 ```
 
 **Blocked on both?** Take [section 4.1](#41-create-the-topology-collection) Path C — repoint the `kong_topology_source` macro at its live-search fallback. One edit, no collection required, dropdowns stay dynamic.
+
+### A dashboard is missing from the app menu but visible under Dashboards
+
+The dashboard works — it is only absent from the navigation bar. Navigation matches on the **view ID**, not the label. Compare all five:
+
+```spl
+| rest /servicesNS/-/-/data/ui/views
+| search title=kong_*
+| table title, label, eai:acl.app, eai:acl.sharing
+| sort title
+```
+
+Three things can cause it, and the `title` column is the ID:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `title` is e.g. `kong_proxy___traffic__rate_limiting_and_clients` | ID derived from the typed title instead of set explicitly. Punctuation in the label mangles it — the Traffic dashboard is the usual victim, being the only label with a comma. | Recreate the dashboard with the ID set to the filename, or edit `nav/default.xml` to reference the ID you actually have. |
+| `eai:acl.app` differs from the other four | Saved into a different app (usually `search`). Reachable from Dashboards, never from this app's nav. | Move it: Dashboards → Edit → Permissions, or recreate it in the right app. |
+| `eai:acl.sharing` is `user` while others are `app` | Private. Nav will not render it for anyone else. | Edit → Permissions → shared in App. |
+
+The nav ships with an **"Other views"** collection (`<view source="unclassified"/>`) as a safety net. A dashboard whose ID drifted appears there instead of vanishing — so if you see one under "Other views", that is the signal its ID does not match.
+
+If everything looks correct and it is still missing, the nav is cached: visit `/debug/refresh` on the search head, or restart.
 
 ### Dropdowns are empty but there is no error
 
