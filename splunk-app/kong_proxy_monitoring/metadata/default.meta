@@ -34,3 +34,36 @@ export = system
 [props]
 access = read : [ * ], write : [ admin ]
 export = system
+
+# ---------------------------------------------------------------------------
+# kong_topology KV Store collection
+#
+# WRITE IS DELIBERATELY NARROWER THAN READ.
+#
+# Read must be broad: every dashboard's Service and Route dropdown does
+# `| inputlookup kong_topology`, and a user who cannot read it gets empty
+# dropdowns with no error explaining why. The contents - service names, route
+# names, a count and a timestamp - are a strict subset of what any user with
+# access to index=kong_common could already derive by searching it directly,
+# so broad read grants nothing new.
+#
+# Write is restricted to admin and power. Only the "Kong - Refresh Topology"
+# scheduled search should ever write here. A user who can write to the
+# collection can inject route and service names into every dashboard's
+# dropdown, which is a (mild) integrity concern rather than a confidentiality
+# one - but there is no reason to allow it.
+#
+# To narrow read further, replace [ * ] with a specific role. The dashboards
+# will only work for members of that role.
+#
+# Note this is a KV Store collection, NOT a CSV lookup. A CSV lookup would be
+# bundled into the search bundle and replicated to the indexer tier on every
+# search; the collection stays on the search head. See collections.conf.
+# ---------------------------------------------------------------------------
+[collections/kong_topology]
+access = read : [ * ], write : [ admin, power ]
+export = system
+
+[transforms/kong_topology]
+access = read : [ * ], write : [ admin ]
+export = system

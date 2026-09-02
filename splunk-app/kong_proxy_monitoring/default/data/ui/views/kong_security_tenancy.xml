@@ -10,6 +10,45 @@
         <latest>now</latest>
       </default>
     </input>
+    <!-- ROLE SELECTORS.
+         This dashboard is about two specific roles rather than about traffic
+         in general: the service fronting Kong's Admin API, and the route
+         handling Vault auth. Those names used to be hardcoded into twelve
+         panel queries on this page, so a deployment naming them differently
+         got a completely blank dashboard with no error to explain why.
+
+         The defaults below MUST match the `kong_admin_service` and
+         `kong_auth_route` macros in macros.conf, which the equivalent alerts
+         use. A Simple XML <default> cannot reference a macro, so the pair has
+         to be kept in step by hand - operations-guide.md section 5 lists both
+         in one table. Choices come from the kong_topology collection, so you
+         can also just repoint them at runtime. -->
+    <input type="dropdown" token="svcfilter" searchWhenChanged="true">
+      <label>Admin API service</label>
+      <search>
+        <query>| inputlookup kong_topology | stats count by service | sort service</query>
+      </search>
+      <fieldForLabel>service</fieldForLabel>
+      <fieldForValue>service</fieldForValue>
+      <choice value="*">All services</choice>
+      <default>admin-api</default>
+      <initialValue>admin-api</initialValue>
+      <prefix>service="</prefix>
+      <suffix>"</suffix>
+    </input>
+    <input type="dropdown" token="rtfilter" searchWhenChanged="true">
+      <label>Auth route</label>
+      <search>
+        <query>| inputlookup kong_topology | stats count by route | sort route</query>
+      </search>
+      <fieldForLabel>route</fieldForLabel>
+      <fieldForValue>route</fieldForValue>
+      <choice value="*">All routes</choice>
+      <default>auth-route</default>
+      <initialValue>auth-route</initialValue>
+      <prefix>route="</prefix>
+      <suffix>"</suffix>
+    </input>
     <input type="dropdown" token="span" searchWhenChanged="true">
       <label>Chart granularity</label>
       <choice value="5m">5 minutes</choice>
@@ -25,9 +64,11 @@
     <panel>
       <html>
         <div style="padding:8px 12px;border-left:4px solid #D41F1F;background:#FBF2F2;">
-          <b>Admin API exposure.</b> The <tt>admin-route</tt> proxies to the <tt>admin-api</tt> service, which means Kong's own
-          control plane is reachable through the data plane. Anyone who can call it can read or rewrite routes, services and
-          plugins. Treat every caller here as privileged, and treat an unfamiliar <tt>client_ip</tt> as an incident until proven otherwise.
+          <b>Admin API exposure.</b> The service selected above fronts Kong's Admin API, which means the control plane is
+          reachable through the data plane. Anyone who can call it can read or rewrite routes, services and plugins.
+          Treat every caller here as privileged, and treat an unfamiliar <tt>client_ip</tt> as an incident until proven otherwise.
+          The selector defaults to <tt>admin-api</tt>; repoint it if your deployment names that service differently, and update
+          the <tt>kong_admin_service</tt> macro to match so the corresponding alert follows.
         </div>
       </html>
     </panel>
@@ -38,7 +79,7 @@
       <title>Admin API calls</title>
       <single>
         <search>
-          <query>`kong_base` | where service=="admin-api" | stats count</query>
+          <query>`kong_base` | search $svcfilter$ | stats count</query>
           <earliest>$tr.earliest$</earliest>
           <latest>$tr.latest$</latest>
         </search>
@@ -49,7 +90,7 @@
       <title>Distinct Admin API callers</title>
       <single>
         <search>
-          <query>`kong_base` | where service=="admin-api" | stats dc(client_ip) as callers</query>
+          <query>`kong_base` | search $svcfilter$ | stats dc(client_ip) as callers</query>
           <earliest>$tr.earliest$</earliest>
           <latest>$tr.latest$</latest>
         </search>
@@ -63,7 +104,7 @@
       <title>Admin API non-2xx</title>
       <single>
         <search>
-          <query>`kong_base` | where service=="admin-api" AND status&gt;=300 | stats count</query>
+          <query>`kong_base` | search $svcfilter$ | where status&gt;=300 | stats count</query>
           <earliest>$tr.earliest$</earliest>
           <latest>$tr.latest$</latest>
         </search>
@@ -77,7 +118,7 @@
       <title>Admin API auth rejections (401/403)</title>
       <single>
         <search>
-          <query>`kong_base` | where service=="admin-api" AND (status==401 OR status==403) | stats count</query>
+          <query>`kong_base` | search $svcfilter$ | where (status==401 OR status==403) | stats count</query>
           <earliest>$tr.earliest$</earliest>
           <latest>$tr.latest$</latest>
         </search>
@@ -94,7 +135,7 @@
       <title>Admin API caller audit</title>
       <table>
         <search>
-          <query>`kong_base` | where service=="admin-api"
+          <query>`kong_base` | search $svcfilter$
 | stats count as requests,
         values(status) as status_codes,
         sum(eval(if(status&gt;=400,1,0))) as errors,
@@ -124,7 +165,7 @@
       <title>Admin API paths touched</title>
       <table>
         <search>
-          <query>`kong_base` | where service=="admin-api"
+          <query>`kong_base` | search $svcfilter$
 | stats count as requests,
         dc(client_ip) as callers,
         values(status) as status_codes
@@ -144,7 +185,7 @@
       <title>Admin API activity over time</title>
       <chart>
         <search>
-          <query>`kong_base` | where service=="admin-api"
+          <query>`kong_base` | search $svcfilter$
 | timechart span=$span$ count by status_class</query>
           <earliest>$tr.earliest$</earliest>
           <latest>$tr.latest$</latest>
@@ -176,9 +217,9 @@
       <title>Auth operations over time</title>
       <chart>
         <search>
-          <query>`kong_base` | where route=="auth-route"
-| eval auth_op=case(match(upstream_path, "/auth/kubernetes/login$"), "k8s login",
-                    match(upstream_path, "/auth/token/renew-self$"), "token renew",
+          <query>`kong_base` | search $rtfilter$
+| eval auth_op=case(match(upstream_path, "/auth/kubernetes/login$$"), "k8s login",
+                    match(upstream_path, "/auth/token/renew-self$$"), "token renew",
                     true(), "other")
 | timechart span=$span$ count by auth_op</query>
           <earliest>$tr.earliest$</earliest>
@@ -194,7 +235,7 @@
       <title>Auth failures over time</title>
       <chart>
         <search>
-          <query>`kong_base` | where route=="auth-route" AND status&gt;=400
+          <query>`kong_base` | search $rtfilter$ | where status&gt;=400
 | eval failure=case(status==401,"401 unauthorised", status==403,"403 forbidden",
                     status==429,"429 throttled", status&gt;=500,"5xx server", true(),"other 4xx")
 | timechart span=$span$ count by failure</query>
@@ -214,9 +255,9 @@
       <title>Auth outcome by operation</title>
       <table>
         <search>
-          <query>`kong_base` | where route=="auth-route"
-| eval auth_op=case(match(upstream_path, "/auth/kubernetes/login$"), "k8s login",
-                    match(upstream_path, "/auth/token/renew-self$"), "token renew",
+          <query>`kong_base` | search $rtfilter$
+| eval auth_op=case(match(upstream_path, "/auth/kubernetes/login$$"), "k8s login",
+                    match(upstream_path, "/auth/token/renew-self$$"), "token renew",
                     true(), "other")
 | stats count as attempts,
         sum(eval(if(status&lt;400,1,0)))  as succeeded,
@@ -242,7 +283,7 @@
       <title>Clients failing authentication</title>
       <table>
         <search>
-          <query>`kong_base` | where route=="auth-route" AND (status==401 OR status==403)
+          <query>`kong_base` | search $rtfilter$ | where (status==401 OR status==403)
 | stats count as denials,
         values(status) as codes,
         dc(upstream_path) as paths,

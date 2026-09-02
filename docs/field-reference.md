@@ -59,6 +59,11 @@ Use these. They are clean names, correctly typed, with the traps already handled
 | `retried` | `try_count > 1` | `1` = a balancer retry happened |
 | `upstream_ip` | last of `tries{}.ip` | The target that **served** the request |
 | `balancer_ms` | last of `tries{}.balancer_latency` | Target selection time |
+| `read_timeout_ms` | `service.read_timeout` | **Per-service**, read from the event — not a configured constant |
+| `connect_timeout_ms` | `service.connect_timeout` | Per-service |
+| `write_timeout_ms` | `service.write_timeout` | Per-service |
+| `max_retries` | `service.retries` | The service's configured retry budget |
+| `retries_exhausted` | `try_count > max_retries` | `1` = Kong ran out of retries; the failure reached the user |
 
 **Not in `kong_base`, available if `request.*` is restored:** `request.id`, `request.method`, `request.uri`, `request.querystring`, `request.size`, `request.tls.version`. See [log-format-validation.md](log-format-validation.md) finding 1.
 
@@ -138,7 +143,18 @@ Note the direction of the failure: the naive version silently *drops* the retrie
 
 Kong emits `RateLimit-Limit` and window-suffixed `X-RateLimit-Limit-Second`. The bare lowercase form in these logs is HashiCorp Vault's quota, proxied through. Detect Kong throttling as `status==429 AND short_circuited==1`. Full reasoning in [log-format-validation.md](log-format-validation.md) finding 5.
 
-### Gotcha 8 — do not filter on `route.name=*` to find Kong events
+### Gotcha 8 — the timeout and retry budget are per-service, not global
+
+```spl
+| where proxy_ms >= 48000                        ← WRONG. Assumes every service uses a 60s timeout.
+| where proxy_ms >= (read_timeout_ms * 0.8)      ← correct, uses each service's own value
+```
+
+`service.read_timeout` and `service.retries` are in every event. A service configured with a 10-second timeout will time out at 10s while a hardcoded 48s threshold is still calling it healthy. Same for retries: `max_retries` is what makes `retries_exhausted` computable, and it differs per service.
+
+Note the arithmetic — `retries = 5` means up to **6** attempts, so exhaustion is `try_count > max_retries`, not `>=`.
+
+### Gotcha 9 — do not filter on `route.name=*` to find Kong events
 
 ```spl
 index=kong_common source="/openshift/logs.stdout" route.name=*        ← drops no-route 404s

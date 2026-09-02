@@ -21,7 +21,9 @@ kong-proxy-splunk/
         │   ├── app.conf
         │   ├── props.conf           # Field extraction (only needed if JSON isn't resolving)
         │   ├── macros.conf          # kong_base — everything depends on this
-        │   ├── savedsearches.conf   # 12 alerts (ship DISABLED, see below)
+        │   ├── collections.conf     # kong_topology KV Store collection (dropdown source)
+        │   ├── transforms.conf      # Exposes the collection to SPL as a lookup
+        │   ├── savedsearches.conf   # 13 alerts (ship DISABLED) + topology refresh (ships ENABLED)
         │   ├── alert_actions.conf   # Email formatting
         │   └── data/ui/
         │       ├── nav/default.xml
@@ -54,11 +56,13 @@ No filesystem access (Splunk Cloud)? The dashboards are Simple XML and paste-imp
 | **Traffic, Rate Limiting and Clients** | Throttling, or a noisy client |
 | **Security and Tenancy** | Admin API audit, per-namespace, auth operations |
 
-Dropdowns are static `<choice>` lists, not population searches — a populated dropdown costs a full `kong_base` scan on every page load and hides routes that have gone silent. Add a `<choice>` line when you add a route.
+**Dropdowns discover your topology rather than assuming it.** They read the `kong_topology` KV Store collection, maintained hourly by the `Kong - Refresh Topology` search. That is a collection read on the search head, not an index scan — so discovery is free at page load, unlike a live population search that would scan the full selected time range every time a dashboard opened. And because the collection remembers entities for 30 days, a route that has gone silent stays selectable, which a live search would drop precisely when you needed it.
+
+KV Store rather than a CSV lookup deliberately: a CSV lookup is bundled into the search bundle and replicated to the **indexer tier** on every search, while the collection stays on the search head and is access-controlled per collection. The refresh search is `| stats count by service, route`, and that aggregation is a security control — only service names, route names, a count and a timestamp can reach the collection, never client IPs, Vault namespaces or request paths.
 
 ## Alerts
 
-Twelve, covering health (5xx rate, upstream unreachable, route gone silent, latency, retries, target dropped, timeout proximity), security (rate limiting, auth failures, Admin API access), and one that watches the pipeline itself.
+Thirteen, covering health (5xx rate, upstream unreachable, route gone silent, latency, retries and retry exhaustion, target dropped, timeout proximity), security (rate limiting, auth failures, Admin API access), one that watches the pipeline itself, and one that reports when Kong's own config changes.
 
 **They ship disabled on purpose.** The thresholds come from the Kong config and general gateway norms, not from your traffic. Enabling twelve untuned alerts is how a monitoring rollout gets muted in its first fortnight. Run the baseline queries in [operations-guide.md](docs/operations-guide.md) section 7, then enable in the documented order — the three threshold-light ones are safe immediately.
 

@@ -111,13 +111,14 @@ Settings → Advanced search → Search macros → New Search Macro. For each, s
 | `kong_index` | Index and source in one place. Change here if yours differ. |
 | `kong_base` | **The foundation.** Normalises every field trap. |
 | `kong_proxied` | `kong_base` filtered to requests that reached the upstream. Use for all latency stats. |
-| `kong_read_timeout_ms` | `60000` — from the Kong service config. Used by one alert and one dashboard. |
 | `kong_min_requests` | `50` — minimum volume before a ratio alert may fire. Used by four alerts. |
+| `kong_admin_service` | Which service fronts the Admin API. See [section 5](#5-install-the-dashboards). |
+| `kong_auth_route` | Which route handles Vault auth. |
+| `kong_ratelimited_route` | Which route carries the rate-limiting plugin. |
 
-Five macros, not fifteen. A constant only earns a macro here when more than one
-search uses it; the other ten alert thresholds are written inline in the `where`
-clause of the alert that owns them, where you can read them in context. [Section
-7](#7-tune-the-thresholds) lists all of them and where to edit each.
+A constant only earns a macro when more than one search uses it; the other alert thresholds are written inline in the `where` clause of the alert that owns them, where you can read them in context. [Section 7](#7-tune-the-thresholds) lists all of them and where to edit each.
+
+> **There is no `kong_read_timeout_ms` macro.** The upstream timeout is not a constant to configure — it is in every log event as `service.read_timeout`, and `kong_base` reads it per-event as `read_timeout_ms`. It was previously hardcoded to `60000`, which was wrong across services: one configured with a 10-second timeout would have had to reach 48 seconds before the timeout-proximity alert considered it slow — long after it had already timed out. `service.retries` is read the same way, as `max_retries`, which is what makes retry-exhaustion detectable at all.
 
 Set permissions on each: Settings → Search macros → Permissions → **All apps (system)**, Read: Everyone. Without this, ad-hoc searches from other app contexts fail with "macro not found".
 
@@ -148,6 +149,44 @@ Then confirm the normalisation actually worked:
 
 - Every value must be a 3-digit code or blank. If you see `-` or `502, 200`, the `mvfilter` line did not paste correctly.
 
+### 4.1 Create the topology collection
+
+The dashboards populate their Service and Route dropdowns from a KV Store collection instead of scanning the index on every page load. Set it up before installing the dashboards, or every dropdown will be empty.
+
+**Path A (app deploy):** `collections.conf` and `transforms.conf` ship with the app. Nothing to create — skip to the "run it once" step.
+
+**Path B (manual / Splunk Cloud):**
+
+1. Settings → Lookups → Lookup definitions → New. Name `kong_topology`, type **KV Store**, collection `kong_topology`, supported fields `_key, service, route, requests, last_seen`.
+2. The collection itself must exist first. On Splunk Cloud without filesystem access, create it via the REST endpoint `/servicesNS/nobody/kong_proxy_monitoring/storage/collections/config` with name `kong_topology`, or install the app so `collections.conf` is applied.
+3. Permissions: Settings → Lookups → Lookup definitions → Permissions → **All apps**, Read: Everyone, Write: admin/power.
+
+**Run it once so the dropdowns populate immediately** rather than at the top of the next hour:
+
+```spl
+| savedsearch "Kong - Refresh Topology"
+```
+
+Then confirm:
+
+```spl
+| inputlookup kong_topology
+```
+
+You should get one row per live service/route pair.
+
+> **Why KV Store and not a CSV lookup.** A CSV lookup is bundled into the search bundle and replicated to the **indexer tier** on every search; a KV Store collection stays on the search head and is access-controlled per collection. For mutable state on Splunk Cloud, that is the deciding difference. KV Store also handles its own replication across search head cluster members — `outputlookup` against a CSV in an SHC relies on lookup replication and is a known source of write conflicts and stale reads.
+
+> **Security invariant — verify this, and re-verify it after any edit to the refresh search.**
+> ```spl
+> | inputlookup kong_topology | fields *
+> ```
+> The only columns must be `_key`, `service`, `route`, `requests`, `last_seen`. The refresh search is an aggregation — `| stats count by service, route` — and that shape is what guarantees client IPs, Vault namespaces, request paths, response headers and token index values **cannot** reach the collection, regardless of what is in the logs. It is a security control, not a convenience. Adding a field to that `BY` clause widens what gets persisted.
+
+> **Reassign the owner before handover.** `Kong - Refresh Topology` ships owned by whoever installs it. Owned by a person, it stops running when that person is deprovisioned, and the topology silently freezes with no error anywhere. Move it to a service account: Settings → Searches, reports and alerts → Edit → Reassign.
+
+`Kong - Refresh Topology` is the one scheduled object that ships **enabled** — it has no threshold to tune, and nothing works until it has run.
+
 ---
 
 ## 5. Install the dashboards
@@ -169,9 +208,25 @@ For each XML file in `splunk-app/kong_proxy_monitoring/default/data/ui/views/`:
 
 Route and Latency Analysis works at two scopes from one page: leave Route on "All routes" for the cross-cutting latency view, or pick a single route to drill in. It replaces what were previously two separate dashboards.
 
+### Deploying against a different Kong install — the five names
+
+Two dashboards and two alerts are about a specific **role** rather than about traffic in general. Those names live in exactly five places. Nothing else in the pack hardcodes an entity name, so this table is the complete portability surface:
+
+| # | Where | Object | Default | Used by |
+|---|---|---|---|---|
+| 1 | `macros.conf` | `kong_admin_service` | `service="admin-api"` | Alert 11 |
+| 2 | `macros.conf` | `kong_auth_route` | `route="auth-route"` | Alert 10 |
+| 3 | `macros.conf` | `kong_ratelimited_route` | `route="ee-smp-functests"` | Traffic dashboard 429 tile |
+| 4 | `kong_security_tenancy.xml` | `svcfilter` input `<default>` | `admin-api` | Security dashboard, Admin API half |
+| 5 | `kong_security_tenancy.xml` | `rtfilter` input `<default>` | `auth-route` | Security dashboard, auth half |
+
+**Rows 1 and 4 must agree, and rows 2 and 5 must agree.** They are separate because a Simple XML `<default>` cannot reference a macro — the alerts have no UI so they need the macro, the dashboards need an overridable input. Change them in pairs.
+
+If a role does not exist in your deployment, point the macro at something that matches nothing (`service="__none__"`). Panels render empty and the alert never fires — degraded, not wrong. The Vault-specific parts of the Security dashboard (`x-vault-namespace`, the auth path classification) behave the same way against a non-Vault upstream: empty, not broken.
+
 The Overview drills through to it when you click a row in the health matrix, passing both the service and the route. That link assumes the app context `kong_proxy_monitoring` — if you installed into a different app, edit the `<link>` element in `kong_service_health_overview.xml` to match.
 
-> **Dropdowns are static, by design.** They list the two services and four routes as literal `<choice>` entries rather than running a search to discover them. A populated dropdown costs a full `kong_base` scan over the selected time range *on every page load*, which at a 24-hour range on a busy index is real I/O to render six words. Worse, a route with no traffic in the window vanishes from the list — and a silent route is exactly what you would be looking for. **If you add or rename a route in Kong, add a `<choice>` line** to the dashboards that carry a Route selector (`kong_service_health_overview.xml`, `kong_route_latency.xml`, `kong_traffic_rate_limiting.xml`). Unknown traffic still appears in every table regardless, under `(no-route-matched)`.
+> **Dropdowns discover the topology; they do not assume it.** Every Service and Route selector is populated by `| inputlookup kong_topology`, reading the KV Store collection that [section 4.1](#41-create-the-topology-collection) sets up. That is a collection read on the search head, not an index scan — so discovery costs nothing at page load, unlike a live `kong_base` population search which would scan the full selected time range every time someone opened a dashboard. It also means a route that has gone silent stays selectable, because the collection remembers entities for 30 days, whereas a live search would drop exactly the route you were looking for. Add a route to Kong and it appears in the dropdowns within the hour. Only `*` and the `(no-service)` / `(no-route-matched)` entries are static, because those are `kong_base` constants rather than topology.
 
 ---
 
@@ -179,7 +234,7 @@ The Overview drills through to it when you click a row in the health matrix, pas
 
 ### 6.1 Read this first
 
-**All twelve alerts ship disabled (`disabled = 1`). That is deliberate.**
+**All thirteen alerts ship disabled (`disabled = 1`). That is deliberate.** (`Kong - Refresh Topology` is not an alert and ships enabled — see [section 4.1](#41-create-the-topology-collection).)
 
 The thresholds come from the Kong config and general gateway norms, not from your traffic. Enabling all twelve untuned is how a monitoring rollout gets muted in its first fortnight. Work through [step 7](#7-tune-the-thresholds) first.
 
@@ -213,6 +268,8 @@ An alert with no mail server triggers and then silently fails to deliver — wor
 | 10 | Authentication Failure Spike | High | `6-59/10 * * * *` | 10m | ≥25 401/403 on auth-route |
 | 11 | Admin API Unexpected Activity | Critical | `*/10 * * * *` | 10m | Any Admin API 401/403, or ≥5 errors |
 | 12 | Log Ingestion Stalled | High | `*/5 * * * *` | 10m | Zero events |
+| 13 | New Route Or Service Detected | Medium | `27 * * * *` | 60m | Traffic from an entity absent from the topology collection |
+| — | **Refresh Topology** | — | `12 * * * *` | 70m | **Not an alert.** Maintains the dropdown collection, and is the one scheduled object that ships **enabled**. |
 
 Schedules are staggered on purpose so twelve searches do not dispatch on the same minute.
 
@@ -277,7 +334,6 @@ This is the complete tuning surface. Two are macros because more than one search
 | Threshold | Default | Where to edit |
 |---|---|---|
 | Minimum request volume for ratio alerts | `50` | **macro** `kong_min_requests` |
-| Upstream read timeout | `60000` | **macro** `kong_read_timeout_ms` |
 | 5xx breach percentage | `2` | Alert 1 — `where error_pct > 2` |
 | Short-circuited 5xx count | `10` | Alert 2 — `where failures >= 10` |
 | Traffic-stopped baseline | `20` per 15m | Alert 3 — `where baseline_per_15m >= 20` |
@@ -285,11 +341,15 @@ This is the complete tuning surface. Two are macros because more than one search
 | Kong self-latency p95 | `100` ms | Alert 5 — `where p95_kong_ms > 100` |
 | Retry rate | `5` % | Alert 6 — `where retry_pct > 5` |
 | Target-dropped | structural | Alert 7 — no threshold; compares to a 24h baseline |
-| Timeout proximity | `80` % of read timeout | Alert 8 — `proxy_ms >= (kong_read_timeout_ms * 0.8)` |
+| Timeout proximity | `80` % | Alert 8 — `proxy_ms >= (read_timeout_ms * 0.8)`. **The timeout itself is read per-service from the data**, so only the 80% fraction is tunable. |
 | 429 burst | `20` | Alert 9 — `where throttled >= 20` |
 | Auth denial burst | `25` | Alert 10 — `where denials >= 25` |
 | Admin API error count | `5` | Alert 11 — `where auth_denied > 0 OR errors >= 5` |
 | Ingestion stall | structural | Alert 12 — no threshold; fires on zero events |
+| New route/service | structural | Alert 13 — no threshold; compares traffic to the topology collection |
+| Retry exhaustion | structural | Alert 6 also fires on any `exhausted_requests > 0`, independent of the percentage |
+
+Two entries that used to be here are gone on purpose: the upstream **read timeout** and the **retry budget** are no longer configured values. Both are in every log event (`service.read_timeout`, `service.retries`) and `kong_base` reads them per-service. Nothing to tune, and correct across services with different settings.
 
 > **Edit in `local/`, not `default/`.** Splunk reads `default/` then overlays `local/`. Anything you change in `default/` is lost the next time the app is redeployed. Copy just the stanza you are changing into `local/macros.conf` or `local/savedsearches.conf`. Edits made through the Splunk UI land in `local/` automatically — it is only hand-editing the files that gets this wrong.
 
@@ -451,11 +511,19 @@ Sign-off criteria. Tick every box.
 - [ ] Event timestamps match request times, not a single repeated config-creation date
 
 **Macros**
-- [ ] All eight macros exist with global permissions
+- [ ] All seven macros exist with global permissions
 - [ ] `` `kong_base` | head 5 `` returns rows
 - [ ] `min(proxy_ms)` is not negative
 - [ ] `` `kong_base` | stats count by upstream_status `` shows only 3-digit codes or blank
 - [ ] `try_count` is never null
+- [ ] `` `kong_base` | stats values(read_timeout_ms), values(max_retries) by service `` returns each service's **own** configured values, not one number for all
+- [ ] `` `kong_base` | stats max(try_count), values(max_retries) by service `` — `try_count` never exceeds `max_retries + 1`
+
+**Topology collection**
+- [ ] `| inputlookup kong_topology` returns one row per live service/route pair
+- [ ] **Security invariant:** `| inputlookup kong_topology | fields *` shows *only* `_key, service, route, requests, last_seen`
+- [ ] `Kong - Refresh Topology` is enabled, and reassigned to a service account
+- [ ] A route with no traffic in the last hour still appears in the dropdowns
 
 **Dashboards**
 - [ ] All five load without a macro or parse error

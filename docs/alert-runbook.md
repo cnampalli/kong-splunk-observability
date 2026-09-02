@@ -18,6 +18,7 @@ One page per alert: what fired, what to check, what it usually is.
 | [10](#10--authentication-failure-spike) | Authentication Failure Spike | High |
 | [11](#11--admin-api-unexpected-activity) | Admin API Unexpected Activity | Critical |
 | [12](#12--log-ingestion-stalled) | Log Ingestion Stalled | High |
+| [13](#13--new-route-or-service-detected) | New Route Or Service Detected | Medium |
 
 ---
 
@@ -132,9 +133,11 @@ The email includes `p95_upstream_ms` for contrast. Normal upstream latency along
 
 ## 6 — Balancer Retry Storm
 
-**Means:** more than 5% of requests needed a balancer retry. Kong is masking an unhealthy target by retrying against a different one.
+**Means:** either more than 5% of requests needed a balancer retry, **or** at least one request exhausted its retries entirely.
 
-**Why this matters:** users are still getting 200s. This will not appear in the error rate at all — until retries are exhausted, and then it appears all at once. This is a leading indicator, and acting on it is cheap.
+**Check `exhausted_requests` first.** Any non-zero value outranks the percentage: it means Kong ran out of targets to try and the failure reached the user. `configured_retries` is read per-service from `service.retries` in the log, not assumed — so this is measured against that service's own budget. Note the arithmetic: `retries = 5` allows up to **6** attempts, so exhaustion is `try_count > max_retries`.
+
+**Why this matters:** while retries are succeeding, users get 200s and the error rate stays completely flat. The problem is invisible in every other panel. It becomes visible all at once when the budget runs out — which is what `exhausted_requests` catches, one step earlier than the 5xx alert would.
 
 **Find the culprit:**
 
@@ -177,13 +180,13 @@ A pod appearing repeatedly as `failed_first_try` while rarely appearing as `upst
 
 ## 8 — Approaching Upstream Read Timeout
 
-**Means:** requests are taking more than 80% of the 60-second `read_timeout`. They have **not** failed yet.
+**Means:** requests are taking more than 80% of **that service's own** `read_timeout`, read per-event from `service.read_timeout`. `configured_timeout_ms` in the email shows the value used. They have **not** failed yet.
 
 This is the cheapest alert to act on, because nothing is broken for users yet.
 
 ```spl
 `kong_proxied`
-| where proxy_ms >= (`kong_read_timeout_ms` * 0.8)
+| where isnotnull(read_timeout_ms) AND proxy_ms >= (read_timeout_ms * 0.8)
 | table _time, service, route, upstream_path, proxy_ms, total_ms, client_ip, upstream_ip
 | sort - proxy_ms
 ```
@@ -291,3 +294,28 @@ index=kong_common | stats max(_time) as last_event | eval last_event=strftime(la
 ```
 
 **If Kong genuinely has quiet periods** (overnight, weekends), widen the window or restrict the alert's schedule to business hours. Do **not** lower its severity — a blind monitoring stack is a high-severity condition regardless of the hour.
+
+---
+
+## 13 — New Route Or Service Detected
+
+**Means:** a service or route is receiving traffic but is not in the `kong_topology` collection. Since that collection is refreshed hourly from live traffic, an entity missing from it appeared within the last hour. **Kong's configuration changed.**
+
+**Check, in order:**
+
+1. **Was there a Kong config deployment?** This is the usual and benign explanation. Correlate with your deploy pipeline.
+2. **What does the new route reach?** `sample_paths` in the email shows what it is serving.
+3. **Does it front a privileged service?** A new route reaching the Admin API is a control-plane exposure and should be treated as an incident until someone claims it. Cross-check against alert 11.
+4. **Is it a rename rather than an addition?** A renamed route appears here as new while the old name ages out of the collection over 30 days. Harmless, but worth confirming that is what happened.
+
+```spl
+`kong_base`
+| stats count as requests, values(upstream_path) as paths, dc(client_ip) as clients,
+        min(_time) as first_seen by service, route
+| eval first_seen=strftime(first_seen,"%F %T")
+| sort first_seen
+```
+
+**Expected during:** any deliberate Kong config change. Suppress during planned deployment windows rather than disabling — this alert is one of the few that gives independent confirmation that a config push did what was intended.
+
+**Note:** this alert self-resolves. Once `Kong - Refresh Topology` next runs, the new entity is in the collection and stops matching. That is why its suppression window is 120 minutes — long enough to avoid re-firing before the refresh catches up.

@@ -2,13 +2,18 @@
   <label>Kong Proxy - Service Health Overview</label>
   <description>Golden signals for vault-svc and admin-api, with Kong-vs-upstream error attribution. Start here during an incident. Every panel is built on the `kong_base` macro.</description>
 
-  <!-- Inputs use static choices, not population searches.
-       A populated dropdown costs a full `kong_base` scan over the selected
-       time range on every page load - for a topology of two services and four
-       routes that is a lot of I/O to render six words. It also hides a route
-       that has gone silent, which is exactly the route you would be looking
-       for. Static choices are free and always complete.
-       Adding a route to Kong? Add one <choice> line here. -->
+  <!-- Dropdowns are populated from the kong_topology KV Store collection,
+       maintained by the "Kong - Refresh Topology" scheduled search.
+
+       inputlookup is a collection read on the search head, not an index scan,
+       so discovering the topology costs nothing at page load. A live
+       `kong_base` population search would scan the full selected time range
+       on every page load AND drop any route that happened to be silent in
+       that window - which is exactly the route you would be looking for. The
+       collection remembers entities for 30 days, so silent routes persist.
+
+       "*" and the "(no-...)" entries stay static: they are kong_base coalesce
+       constants, not topology, so discovering them would be wrong. -->
   <fieldset submitButton="false" autoRun="true">
     <input type="time" token="tr">
       <label>Time range</label>
@@ -19,9 +24,12 @@
     </input>
     <input type="dropdown" token="svc" searchWhenChanged="true">
       <label>Service</label>
+      <search>
+        <query>| inputlookup kong_topology | stats count by service | sort service</query>
+      </search>
+      <fieldForLabel>service</fieldForLabel>
+      <fieldForValue>service</fieldForValue>
       <choice value="*">All services</choice>
-      <choice value="vault-svc">vault-svc</choice>
-      <choice value="admin-api">admin-api</choice>
       <choice value="(no-service)">(no service matched)</choice>
       <default>*</default>
       <initialValue>*</initialValue>
@@ -30,11 +38,12 @@
     </input>
     <input type="dropdown" token="rt" searchWhenChanged="true">
       <label>Route</label>
+      <search>
+        <query>| inputlookup kong_topology | stats count by route | sort route</query>
+      </search>
+      <fieldForLabel>route</fieldForLabel>
+      <fieldForValue>route</fieldForValue>
       <choice value="*">All routes</choice>
-      <choice value="auth-route">auth-route</choice>
-      <choice value="generic-route">generic-route</choice>
-      <choice value="ee-smp-functests">ee-smp-functests</choice>
-      <choice value="admin-route">admin-route</choice>
       <choice value="(no-route-matched)">(no route matched)</choice>
       <default>*</default>
       <initialValue>*</initialValue>

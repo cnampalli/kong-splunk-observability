@@ -10,16 +10,18 @@
         <latest>now</latest>
       </default>
     </input>
-    <!-- Static choices: a population search would cost a full kong_base scan
-         per page load to render four words, and would hide a route that had
-         gone silent. Add a <choice> line if the topology changes. -->
+    <!-- Populated from the kong_topology KV Store collection (see
+         "Kong - Refresh Topology"). A collection read, not an index scan.
+         "*" and "(no-route-matched)" stay static - they are kong_base
+         constants, not topology. -->
     <input type="dropdown" token="rt" searchWhenChanged="true">
       <label>Route</label>
+      <search>
+        <query>| inputlookup kong_topology | stats count by route | sort route</query>
+      </search>
+      <fieldForLabel>route</fieldForLabel>
+      <fieldForValue>route</fieldForValue>
       <choice value="*">All routes</choice>
-      <choice value="auth-route">auth-route</choice>
-      <choice value="generic-route">generic-route</choice>
-      <choice value="ee-smp-functests">ee-smp-functests</choice>
-      <choice value="admin-route">admin-route</choice>
       <choice value="(no-route-matched)">(no route matched)</choice>
       <default>*</default>
       <initialValue>*</initialValue>
@@ -74,7 +76,7 @@
       <title>429s on ee-smp-functests</title>
       <single>
         <search>
-          <query>`kong_base` | where route=="ee-smp-functests" AND status==429 | stats count</query>
+          <query>`kong_base` | `kong_ratelimited_route` | where status==429 | stats count</query>
           <earliest>$tr.earliest$</earliest>
           <latest>$tr.latest$</latest>
         </search>

@@ -10,14 +10,23 @@
         <latest>now</latest>
       </default>
     </input>
-    <!-- Static choices: a population search would cost a full kong_base scan
-         per page load to render two words, and would hide a service that had
-         gone silent. Add a <choice> line if the topology changes. -->
+    <!-- Populated from the kong_topology KV Store collection, which the
+         "Kong - Refresh Topology" scheduled search maintains. inputlookup is
+         a collection read on the search head, NOT an index scan - so this
+         discovers the real topology without the per-page-load cost a live
+         kong_base search would incur, and a service that has gone quiet stays
+         selectable because the collection remembers it.
+         "*" and "(no-service)" are static because they are kong_base
+         constants, not topology - discovering them would be wrong. -->
     <input type="dropdown" token="svc" searchWhenChanged="true">
       <label>Service</label>
+      <search>
+        <query>| inputlookup kong_topology | stats count by service | sort service</query>
+      </search>
+      <fieldForLabel>service</fieldForLabel>
+      <fieldForValue>service</fieldForValue>
       <choice value="*">All services</choice>
-      <choice value="vault-svc">vault-svc</choice>
-      <choice value="admin-api">admin-api</choice>
+      <choice value="(no-service)">(no service matched)</choice>
       <default>*</default>
       <initialValue>*</initialValue>
       <prefix>service="</prefix>
@@ -81,6 +90,20 @@
       </single>
     </panel>
     <panel>
+      <title>Retries exhausted</title>
+      <single>
+        <search>
+          <query>`kong_base` | search $svc$ | stats sum(retries_exhausted) as exhausted</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="useColors">1</option>
+        <option name="rangeColors">["0x118832","0xd94e17","0xd41f1f"]</option>
+        <option name="rangeValues">[1,10]</option>
+      </single>
+    </panel>
+    <panel>
       <title>Requests that reached no upstream</title>
       <single>
         <search>
@@ -90,6 +113,52 @@
         </search>
         <option name="drilldown">none</option>
       </single>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Retry budget consumption</title>
+      <html>
+        <p>
+          <tt>max_retries</tt> is read per-service from <tt>service.retries</tt> in the log, not assumed - so this is each
+          service's own configured budget. A request whose <tt>try_count</tt> exceeds it has <b>exhausted its retries</b>:
+          Kong ran out of targets to try and the failure reached the user. Retries otherwise hide an unhealthy backend
+          completely - users see 200s and the error rate stays flat - so exhaustion is the moment that stops being true.
+        </p>
+      </html>
+      <table>
+        <search>
+          <query>`kong_base` | search $svc$
+| stats count as requests,
+        values(max_retries) as configured_retries,
+        max(try_count)      as most_attempts_seen,
+        sum(retried)        as retried_requests,
+        sum(retries_exhausted) as exhausted_requests,
+        sum(eval(if(retries_exhausted==1 AND status&gt;=500,1,0))) as exhausted_and_failed
+        by service, upstream_host
+| eval retry_pct    = round(retried_requests*100/requests, 3),
+       budget_used_pct = round(most_attempts_seen*100/(configured_retries+1), 0)
+| fields service, upstream_host, requests, configured_retries, most_attempts_seen, budget_used_pct, retried_requests, retry_pct, exhausted_requests, exhausted_and_failed
+| sort - exhausted_requests, - retry_pct</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">10</option>
+        <format type="color" field="budget_used_pct">
+          <colorPalette type="list">[#FFFFFF,#CBA700,#D41F1F]</colorPalette>
+          <scale type="threshold">50,100</scale>
+        </format>
+        <format type="color" field="exhausted_requests">
+          <colorPalette type="list">[#FFFFFF,#D41F1F]</colorPalette>
+          <scale type="threshold">1</scale>
+        </format>
+        <format type="color" field="exhausted_and_failed">
+          <colorPalette type="list">[#FFFFFF,#D41F1F]</colorPalette>
+          <scale type="threshold">1</scale>
+        </format>
+      </table>
     </panel>
   </row>
 
