@@ -1,0 +1,319 @@
+<form version="1.1">
+  <label>Kong Proxy - Security and Tenancy</label>
+  <description>Two sensitive surfaces in one place: who is reaching the Kong Admin API through admin-route, and how traffic and failures break down per Vault namespace and per auth operation.</description>
+
+  <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="tr">
+      <label>Time range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="dropdown" token="span" searchWhenChanged="true">
+      <label>Chart granularity</label>
+      <choice value="5m">5 minutes</choice>
+      <choice value="1h">1 hour</choice>
+      <choice value="1d">1 day</choice>
+      <default>1h</default>
+      <initialValue>1h</initialValue>
+    </input>
+  </fieldset>
+
+  <!-- ==================== ADMIN API ==================== -->
+  <row>
+    <panel>
+      <html>
+        <div style="padding:8px 12px;border-left:4px solid #D41F1F;background:#FBF2F2;">
+          <b>Admin API exposure.</b> The <tt>admin-route</tt> proxies to the <tt>admin-api</tt> service, which means Kong's own
+          control plane is reachable through the data plane. Anyone who can call it can read or rewrite routes, services and
+          plugins. Treat every caller here as privileged, and treat an unfamiliar <tt>client_ip</tt> as an incident until proven otherwise.
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Admin API calls</title>
+      <single>
+        <search>
+          <query>`kong_base` | where service=="admin-api" | stats count</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Distinct Admin API callers</title>
+      <single>
+        <search>
+          <query>`kong_base` | where service=="admin-api" | stats dc(client_ip) as callers</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="useColors">1</option>
+        <option name="rangeColors">["0x118832","0xcba700","0xd41f1f"]</option>
+        <option name="rangeValues">[3,10]</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Admin API non-2xx</title>
+      <single>
+        <search>
+          <query>`kong_base` | where service=="admin-api" AND status&gt;=300 | stats count</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="useColors">1</option>
+        <option name="rangeColors">["0x118832","0xcba700","0xd41f1f"]</option>
+        <option name="rangeValues">[1,20]</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Admin API auth rejections (401/403)</title>
+      <single>
+        <search>
+          <query>`kong_base` | where service=="admin-api" AND (status==401 OR status==403) | stats count</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="useColors">1</option>
+        <option name="rangeColors">["0x118832","0xcba700","0xd41f1f"]</option>
+        <option name="rangeValues">[1,5]</option>
+      </single>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Admin API caller audit</title>
+      <table>
+        <search>
+          <query>`kong_base` | where service=="admin-api"
+| stats count as requests,
+        values(status) as status_codes,
+        sum(eval(if(status&gt;=400,1,0))) as errors,
+        sum(eval(if(status==401 OR status==403,1,0))) as auth_denied,
+        dc(upstream_path) as distinct_paths,
+        min(_time) as first_seen,
+        max(_time) as last_seen
+        by client_ip
+| eval first_seen=strftime(first_seen,"%F %T"), last_seen=strftime(last_seen,"%F %T")
+| sort - requests</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">30</option>
+        <format type="color" field="auth_denied">
+          <colorPalette type="list">[#FFFFFF,#D41F1F]</colorPalette>
+          <scale type="threshold">1</scale>
+        </format>
+        <format type="color" field="errors">
+          <colorPalette type="list">[#FFFFFF,#CBA700]</colorPalette>
+          <scale type="threshold">1</scale>
+        </format>
+      </table>
+    </panel>
+    <panel>
+      <title>Admin API paths touched</title>
+      <table>
+        <search>
+          <query>`kong_base` | where service=="admin-api"
+| stats count as requests,
+        dc(client_ip) as callers,
+        values(status) as status_codes
+        by upstream_path
+| sort - requests | head 25</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+      </table>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Admin API activity over time</title>
+      <chart>
+        <search>
+          <query>`kong_base` | where service=="admin-api"
+| timechart span=$span$ count by status_class</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.fieldColors">{"2xx":"0x118832","3xx":"0x006D9C","4xx":"0xCBA700","5xx":"0xD41F1F","unknown":"0x888888"}</option>
+        <option name="charting.axisTitleY.text">Requests</option>
+        <option name="charting.legend.placement">right</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- ==================== VAULT AUTH ==================== -->
+  <row>
+    <panel>
+      <html>
+        <div style="padding:8px 12px;border-left:4px solid #006D9C;background:#F2F7FA;">
+          <b>Vault auth operations.</b> The <tt>auth-route</tt> matches three paths: Kubernetes login at the root namespace,
+          Kubernetes login under a named namespace, and token self-renewal. A drop in renewals with a rise in logins usually
+          means tokens are expiring instead of being refreshed - clients are re-authenticating far more than they should.
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Auth operations over time</title>
+      <chart>
+        <search>
+          <query>`kong_base` | where route=="auth-route"
+| eval auth_op=case(match(upstream_path, "/auth/kubernetes/login$"), "k8s login",
+                    match(upstream_path, "/auth/token/renew-self$"), "token renew",
+                    true(), "other")
+| timechart span=$span$ count by auth_op</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.axisTitleY.text">Requests</option>
+        <option name="charting.legend.placement">right</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Auth failures over time</title>
+      <chart>
+        <search>
+          <query>`kong_base` | where route=="auth-route" AND status&gt;=400
+| eval failure=case(status==401,"401 unauthorised", status==403,"403 forbidden",
+                    status==429,"429 throttled", status&gt;=500,"5xx server", true(),"other 4xx")
+| timechart span=$span$ count by failure</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.axisTitleY.text">Failures</option>
+        <option name="charting.legend.placement">right</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Auth outcome by operation</title>
+      <table>
+        <search>
+          <query>`kong_base` | where route=="auth-route"
+| eval auth_op=case(match(upstream_path, "/auth/kubernetes/login$"), "k8s login",
+                    match(upstream_path, "/auth/token/renew-self$"), "token renew",
+                    true(), "other")
+| stats count as attempts,
+        sum(eval(if(status&lt;400,1,0)))  as succeeded,
+        sum(eval(if(status==401 OR status==403,1,0))) as denied,
+        sum(eval(if(status&gt;=500,1,0))) as server_errors,
+        dc(client_ip) as clients,
+        p95(proxy_ms) as p95_ms
+        by auth_op
+| eval success_pct=round(succeeded*100/attempts,2), p95_ms=round(p95_ms,0)
+| sort - attempts</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">10</option>
+        <format type="color" field="success_pct">
+          <colorPalette type="minMidMax" maxColor="#118832" midColor="#CBA700" minColor="#D41F1F"></colorPalette>
+          <scale type="minMidMax" minValue="80" midValue="97" maxValue="100"></scale>
+        </format>
+      </table>
+    </panel>
+    <panel>
+      <title>Clients failing authentication</title>
+      <table>
+        <search>
+          <query>`kong_base` | where route=="auth-route" AND (status==401 OR status==403)
+| stats count as denials,
+        values(status) as codes,
+        dc(upstream_path) as paths,
+        min(_time) as first_denial,
+        max(_time) as last_denial
+        by client_ip
+| eval first_denial=strftime(first_denial,"%F %T"), last_denial=strftime(last_denial,"%F %T")
+| sort - denials | head 25</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ==================== NAMESPACE TENANCY ==================== -->
+  <row>
+    <panel>
+      <title>Traffic by Vault namespace</title>
+      <html>
+        <p>From the <tt>x-vault-namespace</tt> response header. This is the only per-tenant dimension available in these logs, because the client request URI - which also carries the namespace - is not currently being emitted by the serializer.</p>
+      </html>
+      <chart>
+        <search>
+          <query>`kong_base` | where isnotnull(vault_ns)
+| timechart span=$span$ count by vault_ns</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.axisTitleY.text">Requests</option>
+        <option name="charting.legend.placement">right</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Namespace health</title>
+      <table>
+        <search>
+          <query>`kong_base` | where isnotnull(vault_ns)
+| stats count as requests,
+        sum(eval(if(status&lt;400,1,0)))  as ok,
+        sum(eval(if(status&gt;=400 AND status&lt;500,1,0))) as c4xx,
+        sum(eval(if(status&gt;=500,1,0))) as c5xx,
+        sum(eval(if(status==401 OR status==403,1,0))) as auth_denied,
+        dc(client_ip) as clients,
+        dc(route) as routes,
+        p95(proxy_ms) as p95_ms
+        by vault_ns
+| eval success_pct=round(ok*100/requests,2), p95_ms=round(p95_ms,0)
+| fields vault_ns, requests, success_pct, c4xx, c5xx, auth_denied, clients, routes, p95_ms
+| sort - requests</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">30</option>
+        <format type="color" field="success_pct">
+          <colorPalette type="minMidMax" maxColor="#118832" midColor="#CBA700" minColor="#D41F1F"></colorPalette>
+          <scale type="minMidMax" minValue="90" midValue="99" maxValue="100"></scale>
+        </format>
+        <format type="color" field="c5xx">
+          <colorPalette type="list">[#FFFFFF,#D41F1F]</colorPalette>
+          <scale type="threshold">1</scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+</form>

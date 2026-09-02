@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# Splunk writes user changes into local/ and metadata/local.meta.
+# Those are instance-specific (tuned thresholds, real recipient addresses,
+# enabled/disabled state) and must not be committed back into the shipped app.
+splunk-app/kong_proxy_monitoring/local/
+splunk-app/kong_proxy_monitoring/metadata/local.meta
+
+# Never commit real log samples - they carry client IPs, Vault namespaces
+# and token index values.
+*.log
+samples/

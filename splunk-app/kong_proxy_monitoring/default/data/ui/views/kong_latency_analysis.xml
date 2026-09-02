@@ -1,0 +1,253 @@
+<form version="1.1">
+  <label>Kong Proxy - Latency Analysis</label>
+  <description>Where request time is actually spent. Separates Kong's own overhead from upstream wait, so a slowdown can be attributed to a plugin rather than blamed on the backend. All upstream statistics exclude short-circuited requests.</description>
+
+  <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="tr">
+      <label>Time range</label>
+      <default>
+        <earliest>-4h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="dropdown" token="svc" searchWhenChanged="true">
+      <label>Service</label>
+      <choice value="*">All services</choice>
+      <default>*</default>
+      <initialValue>*</initialValue>
+      <fieldForLabel>service</fieldForLabel>
+      <fieldForValue>service</fieldForValue>
+      <search>
+        <query>`kong_base` | stats count by service | sort - count</query>
+        <earliest>$tr.earliest$</earliest>
+        <latest>$tr.latest$</latest>
+      </search>
+      <prefix>service="</prefix>
+      <suffix>"</suffix>
+    </input>
+    <input type="dropdown" token="span" searchWhenChanged="true">
+      <label>Chart granularity</label>
+      <choice value="1m">1 minute</choice>
+      <choice value="5m">5 minutes</choice>
+      <choice value="1h">1 hour</choice>
+      <default>5m</default>
+      <initialValue>5m</initialValue>
+    </input>
+  </fieldset>
+
+  <row>
+    <panel>
+      <html>
+        <div style="padding:8px 12px;border-left:4px solid #006D9C;background:#F2F7FA;">
+          <b>Reading these panels on Kong 3.4.</b>
+          <tt>latencies.kong</tt> on 3.4 is Kong's plugin and routing overhead <i>plus</i> request receive time, added together in the serializer.
+          Kong 3.5 splits receive time into its own field, so every threshold on this dashboard shifts on upgrade.
+          <tt>latencies.proxy</tt> is time waiting on the upstream, and <tt>-1</tt> means the request never got there - those are excluded here, not treated as zero.
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Total p95</title>
+      <single>
+        <search>
+          <query>`kong_proxied` | search $svc$ | stats p95(total_ms) as v | eval v=round(v,0)</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="unit">ms</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Upstream p95</title>
+      <single>
+        <search>
+          <query>`kong_proxied` | search $svc$ | stats p95(proxy_ms) as v | eval v=round(v,0)</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="unit">ms</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Kong overhead p95</title>
+      <single>
+        <search>
+          <query>`kong_proxied` | search $svc$ | stats p95(kong_ms) as v | eval v=round(v,0)</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="unit">ms</option>
+        <option name="useColors">1</option>
+        <option name="rangeColors">["0x118832","0xcba700","0xd94e17","0xd41f1f"]</option>
+        <option name="rangeValues">[50,100,500]</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Upstream p99</title>
+      <single>
+        <search>
+          <query>`kong_proxied` | search $svc$ | stats p99(proxy_ms) as v | eval v=round(v,0)</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="unit">ms</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Slowest single request</title>
+      <single>
+        <search>
+          <query>`kong_proxied` | search $svc$ | stats max(total_ms) as v | eval v=round(v,0)</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="unit">ms</option>
+        <option name="useColors">1</option>
+        <option name="rangeColors">["0x118832","0xcba700","0xd41f1f"]</option>
+        <option name="rangeValues">[10000,48000]</option>
+      </single>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Latency percentile trend - upstream</title>
+      <chart>
+        <search>
+          <query>`kong_proxied` | search $svc$
+| timechart span=$span$ p50(proxy_ms) as p50, p90(proxy_ms) as p90, p95(proxy_ms) as p95, p99(proxy_ms) as p99, max(proxy_ms) as max</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.axisTitleY.text">ms</option>
+        <option name="charting.chart.nullValueMode">connect</option>
+        <option name="charting.legend.placement">right</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Kong overhead vs upstream wait</title>
+      <html>
+        <p>If the red band grows while the blue stays flat, the problem is inside Kong - a plugin, the datastore, or DNS - not the backend.</p>
+      </html>
+      <chart>
+        <search>
+          <query>`kong_proxied` | search $svc$
+| timechart span=$span$ p95(kong_ms) as "Kong overhead p95", p95(proxy_ms) as "Upstream wait p95"</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.axisTitleY.text">ms</option>
+        <option name="charting.fieldColors">{"Kong overhead p95":"0xD41F1F","Upstream wait p95":"0x006D9C"}</option>
+        <option name="charting.legend.placement">right</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Latency distribution</title>
+      <chart>
+        <search>
+          <query>`kong_proxied` | search $svc$
+| eval bucket=case(proxy_ms&lt;10,"1: &lt;10ms", proxy_ms&lt;50,"2: 10-50ms", proxy_ms&lt;100,"3: 50-100ms",
+                   proxy_ms&lt;250,"4: 100-250ms", proxy_ms&lt;500,"5: 250-500ms", proxy_ms&lt;1000,"6: 0.5-1s",
+                   proxy_ms&lt;5000,"7: 1-5s", proxy_ms&lt;30000,"8: 5-30s", true(),"9: &gt;30s")
+| stats count by bucket | sort bucket</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.axisTitleX.text">Requests</option>
+        <option name="charting.legend.placement">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Approaching the upstream read timeout</title>
+      <html>
+        <p>The Kong service config sets <tt>read_timeout</tt> to 60000 ms. Requests crossing 80% of that (48000 ms) are about to become 504s. This panel is the leading indicator for that alert.</p>
+      </html>
+      <chart>
+        <search>
+          <query>`kong_proxied` | search $svc$
+| eval near_timeout = if(proxy_ms &gt;= (`kong_read_timeout_ms` * 0.8), 1, 0)
+| timechart span=$span$ sum(near_timeout) as "Within 80% of timeout", count as "Total requests"</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.axisTitleY.text">Requests</option>
+        <option name="charting.legend.placement">right</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Slowest paths</title>
+      <table>
+        <search>
+          <query>`kong_proxied` | search $svc$
+| stats count as requests,
+        p50(proxy_ms) as p50_ms,
+        p95(proxy_ms) as p95_ms,
+        p99(proxy_ms) as p99_ms,
+        max(proxy_ms) as max_ms,
+        avg(kong_ms)  as avg_kong_ms
+        by service, route, upstream_path
+| where requests &gt;= 10
+| eval p50_ms=round(p50_ms,0), p95_ms=round(p95_ms,0), p99_ms=round(p99_ms,0),
+       max_ms=round(max_ms,0), avg_kong_ms=round(avg_kong_ms,1)
+| sort - p95_ms | head 25</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+        <format type="color" field="p95_ms">
+          <colorPalette type="list">[#FFFFFF,#CBA700,#D41F1F]</colorPalette>
+          <scale type="threshold">2000,10000</scale>
+        </format>
+      </table>
+    </panel>
+    <panel>
+      <title>Kong overhead by route - plugin cost</title>
+      <html>
+        <p>Routes with elevated Kong overhead are running more or slower plugins. <tt>ee-smp-functests</tt> carries the rate-limiting plugin, so a rise there may mean the limiter's datastore is slow.</p>
+      </html>
+      <table>
+        <search>
+          <query>`kong_base` | search $svc$
+| stats count as requests,
+        p50(kong_ms) as p50_kong_ms,
+        p95(kong_ms) as p95_kong_ms,
+        max(kong_ms) as max_kong_ms
+        by service, route
+| eval p50_kong_ms=round(p50_kong_ms,1), p95_kong_ms=round(p95_kong_ms,1), max_kong_ms=round(max_kong_ms,1)
+| sort - p95_kong_ms</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+        <format type="color" field="p95_kong_ms">
+          <colorPalette type="list">[#FFFFFF,#CBA700,#D41F1F]</colorPalette>
+          <scale type="threshold">50,200</scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+</form>

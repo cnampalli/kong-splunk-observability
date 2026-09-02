@@ -1,0 +1,12 @@
+<nav search_view="search" color="#5CC05C">
+  <view name="kong_service_health_overview" default="true"/>
+  <view name="kong_route_deep_dive"/>
+  <view name="kong_upstream_balancer_health"/>
+  <view name="kong_latency_analysis"/>
+  <view name="kong_traffic_rate_limiting"/>
+  <view name="kong_security_tenancy"/>
+  <collection label="Alerts">
+    <saved source="all" match="Kong -"/>
+  </collection>
+  <view name="search"/>
+</nav>

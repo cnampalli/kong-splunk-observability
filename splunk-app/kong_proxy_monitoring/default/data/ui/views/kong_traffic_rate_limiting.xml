@@ -1,0 +1,289 @@
+<form version="1.1">
+  <label>Kong Proxy - Traffic, Rate Limiting and Clients</label>
+  <description>Who is calling, how much, and what is getting throttled. Kong-enforced rate limiting and the upstream's own quota are deliberately kept in separate sections - they are different systems and conflating them hides real throttling.</description>
+
+  <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="tr">
+      <label>Time range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="dropdown" token="rt" searchWhenChanged="true">
+      <label>Route</label>
+      <choice value="*">All routes</choice>
+      <default>*</default>
+      <initialValue>*</initialValue>
+      <fieldForLabel>route</fieldForLabel>
+      <fieldForValue>route</fieldForValue>
+      <search>
+        <query>`kong_base` | stats count by route | sort - count</query>
+        <earliest>$tr.earliest$</earliest>
+        <latest>$tr.latest$</latest>
+      </search>
+      <prefix>route="</prefix>
+      <suffix>"</suffix>
+    </input>
+    <input type="dropdown" token="span" searchWhenChanged="true">
+      <label>Chart granularity</label>
+      <choice value="5m">5 minutes</choice>
+      <choice value="1h">1 hour</choice>
+      <choice value="1d">1 day</choice>
+      <default>1h</default>
+      <initialValue>1h</initialValue>
+    </input>
+  </fieldset>
+
+  <row>
+    <panel>
+      <html>
+        <div style="padding:8px 12px;border-left:4px solid #D41F1F;background:#FBF2F2;">
+          <b>The <tt>x-ratelimit-*</tt> headers in these logs are not Kong's.</b>
+          Kong's Rate Limiting plugin emits <tt>RateLimit-Limit</tt> / <tt>RateLimit-Remaining</tt> / <tt>RateLimit-Reset</tt>
+          and window-suffixed variants such as <tt>X-RateLimit-Limit-Second</tt>. It never emits a bare <tt>x-ratelimit-limit</tt>.
+          The lowercase headers seen here arrive alongside <tt>x-vault-index</tt> and <tt>x-vault-namespace</tt> and are
+          <b>HashiCorp Vault's own quota headers, proxied through</b>. Building Kong rate-limit monitoring on them would
+          silently monitor Vault instead.
+          <br/><br/>
+          Kong-enforced throttling is therefore detected structurally: <tt>status=429</tt> with <tt>short_circuited=1</tt>,
+          meaning Kong rejected the request before it ever reached the upstream. See log-format-validation.md finding 5.
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- ============ Kong-enforced rate limiting ============ -->
+  <row>
+    <panel>
+      <title>Kong-enforced 429s</title>
+      <single>
+        <search>
+          <query>`kong_base` | search $rt$ | where status==429 AND short_circuited==1 | stats count</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="useColors">1</option>
+        <option name="rangeColors">["0x118832","0xcba700","0xd41f1f"]</option>
+        <option name="rangeValues">[1,100]</option>
+      </single>
+    </panel>
+    <panel>
+      <title>429s on ee-smp-functests</title>
+      <single>
+        <search>
+          <query>`kong_base` | where route=="ee-smp-functests" AND status==429 | stats count</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Total requests</title>
+      <single>
+        <search>
+          <query>`kong_base` | search $rt$ | stats count</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Distinct clients</title>
+      <single>
+        <search>
+          <query>`kong_base` | search $rt$ | stats dc(client_ip) as clients</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Requests per minute (peak)</title>
+      <single>
+        <search>
+          <query>`kong_base` | search $rt$ | timechart span=1m count as rpm | stats max(rpm) as peak</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Kong rate limiting over time</title>
+      <html>
+        <p>The rate-limiting plugin is configured on <tt>ee-smp-functests</tt>. A 429 appearing on any other route means either the plugin scope is wider than expected, or the upstream itself returned 429 - the <tt>short_circuited</tt> split below tells you which.</p>
+      </html>
+      <chart>
+        <search>
+          <query>`kong_base` | search $rt$
+| where status==429
+| eval enforced_by=if(short_circuited==1, "Kong (plugin)", "Upstream (passed through)")
+| timechart span=$span$ count by enforced_by</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.axisTitleY.text">429s</option>
+        <option name="charting.fieldColors">{"Kong (plugin)":"0xD41F1F","Upstream (passed through)":"0xF58F39"}</option>
+        <option name="charting.legend.placement">right</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>429s by route and client</title>
+      <table>
+        <search>
+          <query>`kong_base` | search $rt$
+| where status==429
+| stats count as throttled,
+        sum(short_circuited) as by_kong,
+        dc(upstream_path) as paths
+        by route, client_ip
+| eval by_upstream = throttled - by_kong
+| sort - throttled | head 25</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ============ Traffic shape ============ -->
+  <row>
+    <panel>
+      <title>Traffic by route</title>
+      <chart>
+        <search>
+          <query>`kong_base` | timechart span=$span$ count by route</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.axisTitleY.text">Requests</option>
+        <option name="charting.legend.placement">right</option>
+      </chart>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Top talkers</title>
+      <html>
+        <p><tt>client_ip</tt> is Kong's <tt>remote_addr</tt>. Behind a load balancer or ingress this may be the LB address rather than the true origin - if every request shows one or two IPs, that is what is happening, and <tt>real_ip_header</tt> / <tt>trusted_ips</tt> need configuring in Kong before this panel is meaningful.</p>
+      </html>
+      <table>
+        <search>
+          <query>`kong_base` | search $rt$
+| stats count as requests,
+        dc(route) as routes,
+        dc(upstream_path) as paths,
+        sum(eval(if(status&gt;=400,1,0))) as errors,
+        sum(eval(if(status==429,1,0))) as throttled,
+        sum(resp_bytes) as bytes_out
+        by client_ip
+| eventstats sum(requests) as grand_total
+| eval share_pct=round(requests*100/grand_total,2), error_pct=round(errors*100/requests,2)
+| fields client_ip, requests, share_pct, routes, paths, errors, error_pct, throttled, bytes_out
+| sort - requests | head 30</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">30</option>
+        <format type="color" field="share_pct">
+          <colorPalette type="list">[#FFFFFF,#CBA700,#D41F1F]</colorPalette>
+          <scale type="threshold">25,50</scale>
+        </format>
+      </table>
+    </panel>
+    <panel>
+      <title>Client concentration</title>
+      <html>
+        <p>How much of total traffic the busiest clients account for. A single client above 50% is a blast-radius risk: its retry storm becomes everyone's outage.</p>
+      </html>
+      <table>
+        <search>
+          <query>`kong_base` | search $rt$
+| stats count as requests by client_ip
+| sort - requests
+| streamstats count as rank, sum(requests) as running
+| eventstats sum(requests) as total
+| eval share_pct = round(requests*100/total, 2),
+       cumulative_pct = round(running*100/total, 2)
+| where rank &lt;= 20
+| fields rank, client_ip, requests, share_pct, cumulative_pct</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+        <format type="color" field="share_pct">
+          <colorPalette type="list">[#FFFFFF,#CBA700,#D41F1F]</colorPalette>
+          <scale type="threshold">25,50</scale>
+        </format>
+        <format type="color" field="cumulative_pct">
+          <colorPalette type="list">[#FFFFFF,#CBA700]</colorPalette>
+          <scale type="threshold">80</scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ============ Upstream Vault quota (clearly separated) ============ -->
+  <row>
+    <panel>
+      <title>Upstream Vault quota headroom - NOT Kong's rate limiter</title>
+      <html>
+        <p>Sourced from the <tt>x-ratelimit-remaining</tt> header that Vault returns and Kong passes through. Useful as an early warning that Vault's own quota is being consumed, but it is a property of the upstream, not of the gateway. Panels are empty if the upstream is not emitting these headers.</p>
+      </html>
+      <chart>
+        <search>
+          <query>`kong_base` | search $rt$
+| eval vault_remaining = tonumber('response.headers.x-ratelimit-remaining'),
+       vault_limit     = tonumber('response.headers.x-ratelimit-limit')
+| where isnotnull(vault_remaining)
+| timechart span=$span$ min(vault_remaining) as "Minimum remaining", avg(vault_remaining) as "Average remaining"</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.axisTitleY.text">Requests remaining in Vault quota</option>
+        <option name="charting.chart.nullValueMode">connect</option>
+        <option name="charting.legend.placement">right</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Vault quota by namespace</title>
+      <table>
+        <search>
+          <query>`kong_base` | search $rt$
+| eval vault_remaining = tonumber('response.headers.x-ratelimit-remaining'),
+       vault_limit     = tonumber('response.headers.x-ratelimit-limit')
+| where isnotnull(vault_remaining)
+| stats count as requests,
+        min(vault_remaining) as min_remaining,
+        avg(vault_remaining) as avg_remaining,
+        values(vault_limit)  as limit_seen
+        by vault_ns
+| eval avg_remaining=round(avg_remaining,0)
+| sort - requests | head 20</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+</form>

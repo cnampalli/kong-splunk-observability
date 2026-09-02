@@ -1,0 +1,297 @@
+<form version="1.1">
+  <label>Kong Proxy - Service Health Overview</label>
+  <description>Golden signals for vault-svc and admin-api, with Kong-vs-upstream error attribution. Start here during an incident. Every panel is built on the `kong_base` macro.</description>
+
+  <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="tr">
+      <label>Time range</label>
+      <default>
+        <earliest>-4h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="dropdown" token="svc" searchWhenChanged="true">
+      <label>Service</label>
+      <choice value="*">All services</choice>
+      <default>*</default>
+      <initialValue>*</initialValue>
+      <fieldForLabel>service</fieldForLabel>
+      <fieldForValue>service</fieldForValue>
+      <search>
+        <query>`kong_base` | stats count by service | sort - count</query>
+        <earliest>$tr.earliest$</earliest>
+        <latest>$tr.latest$</latest>
+      </search>
+      <prefix>service="</prefix>
+      <suffix>"</suffix>
+    </input>
+    <input type="dropdown" token="rt" searchWhenChanged="true">
+      <label>Route</label>
+      <choice value="*">All routes</choice>
+      <default>*</default>
+      <initialValue>*</initialValue>
+      <fieldForLabel>route</fieldForLabel>
+      <fieldForValue>route</fieldForValue>
+      <search>
+        <query>`kong_base` | search $svc$ | stats count by route | sort - count</query>
+        <earliest>$tr.earliest$</earliest>
+        <latest>$tr.latest$</latest>
+      </search>
+      <prefix>route="</prefix>
+      <suffix>"</suffix>
+    </input>
+  </fieldset>
+
+  <!-- ================= Row 1: headline tiles ================= -->
+  <row>
+    <panel>
+      <title>Requests</title>
+      <single>
+        <search>
+          <query>`kong_base` | search $svc$ | search $rt$ | stats count</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="numberPrecision">0</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>Success rate (status &lt; 400)</title>
+      <single>
+        <search>
+          <query>`kong_base` | search $svc$ | search $rt$
+| stats count as total, sum(eval(if(status&lt;400,1,0))) as ok
+| eval pct=if(total&gt;0, round(ok*100/total,2), 100)
+| fields pct</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="unit">%</option>
+        <option name="numberPrecision">0.00</option>
+        <option name="useColors">1</option>
+        <option name="rangeColors">["0xd41f1f","0xd94e17","0xcba700","0x118832"]</option>
+        <option name="rangeValues">[95,99,99.5]</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>5xx rate</title>
+      <single>
+        <search>
+          <query>`kong_base` | search $svc$ | search $rt$
+| stats count as total, sum(eval(if(status&gt;=500,1,0))) as bad
+| eval pct=if(total&gt;0, round(bad*100/total,2), 0)
+| fields pct</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="unit">%</option>
+        <option name="numberPrecision">0.00</option>
+        <option name="useColors">1</option>
+        <option name="rangeColors">["0x118832","0xcba700","0xd94e17","0xd41f1f"]</option>
+        <option name="rangeValues">[0.5,2,5]</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>Short-circuited (never reached upstream)</title>
+      <single>
+        <search>
+          <query>`kong_base` | search $svc$ | search $rt$
+| stats count as total, sum(short_circuited) as sc
+| eval pct=if(total&gt;0, round(sc*100/total,2), 0)
+| fields pct</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="unit">%</option>
+        <option name="numberPrecision">0.00</option>
+        <option name="useColors">1</option>
+        <option name="rangeColors">["0x118832","0xcba700","0xd94e17","0xd41f1f"]</option>
+        <option name="rangeValues">[1,5,15]</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>Upstream p95 latency</title>
+      <single>
+        <search>
+          <query>`kong_proxied` | search $svc$ | search $rt$
+| stats p95(proxy_ms) as p95 | eval p95=round(p95,0)</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="unit">ms</option>
+        <option name="numberPrecision">0</option>
+        <option name="useColors">1</option>
+        <option name="rangeColors">["0x118832","0xcba700","0xd94e17","0xd41f1f"]</option>
+        <option name="rangeValues">[500,2000,10000]</option>
+      </single>
+    </panel>
+  </row>
+
+  <!-- ================= Row 2: error attribution ================= -->
+  <row>
+    <panel>
+      <title>Error attribution over time - is it Kong or the upstream?</title>
+      <html>
+        <p>
+          <b>kong</b> = Kong produced the error itself (short-circuited before the upstream, or rewrote an upstream success into an error).
+          <b>upstream</b> = the upstream service returned the error and Kong passed it through.
+          This is the first question to answer in any gateway incident.
+        </p>
+      </html>
+      <chart>
+        <search>
+          <query>`kong_base` | search $svc$ | search $rt$
+| where error_source!="ok"
+| timechart minspan=1m count by error_source</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="charting.axisTitleY.text">Errors</option>
+        <option name="charting.fieldColors">{"kong":"0xd41f1f","upstream":"0xf58f39","unknown":"0x888888"}</option>
+        <option name="height">300</option>
+      </chart>
+    </panel>
+
+    <panel>
+      <title>Error split</title>
+      <chart>
+        <search>
+          <query>`kong_base` | search $svc$ | search $rt$
+| where error_source!="ok"
+| stats count by error_source | sort - count</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.fieldColors">{"kong":"0xd41f1f","upstream":"0xf58f39","unknown":"0x888888"}</option>
+        <option name="height">300</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- ================= Row 3: the service/route matrix ================= -->
+  <row>
+    <panel>
+      <title>Service and route health matrix</title>
+      <table>
+        <search>
+          <query>`kong_base` | search $svc$ | search $rt$
+| stats count as requests,
+        sum(eval(if(status&lt;400,1,0)))      as ok,
+        sum(eval(if(status&gt;=400 AND status&lt;500,1,0))) as c4xx,
+        sum(eval(if(status&gt;=500,1,0)))     as c5xx,
+        sum(eval(if(error_source=="kong" AND status&gt;=400,1,0)))     as err_kong,
+        sum(eval(if(error_source=="upstream" AND status&gt;=400,1,0))) as err_upstream,
+        sum(short_circuited) as short_circuited,
+        sum(retried)         as retried,
+        p95(proxy_ms)        as upstream_p95_ms,
+        p95(total_ms)        as total_p95_ms
+        by service, route
+| eval success_pct = round(ok*100/requests, 2),
+       upstream_p95_ms = round(upstream_p95_ms, 0),
+       total_p95_ms    = round(total_p95_ms, 0)
+| fields service, route, requests, success_pct, c4xx, c5xx, err_kong, err_upstream, short_circuited, retried, upstream_p95_ms, total_p95_ms
+| sort - requests</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">cell</option>
+        <option name="count">20</option>
+        <format type="color" field="success_pct">
+          <colorPalette type="minMidMax" maxColor="#118832" midColor="#CBA700" minColor="#D41F1F"></colorPalette>
+          <scale type="minMidMax" minValue="90" midValue="99" maxValue="100"></scale>
+        </format>
+        <format type="color" field="c5xx">
+          <colorPalette type="list">[#FFFFFF,#D41F1F]</colorPalette>
+          <scale type="threshold">1</scale>
+        </format>
+        <format type="color" field="err_kong">
+          <colorPalette type="list">[#FFFFFF,#D41F1F]</colorPalette>
+          <scale type="threshold">1</scale>
+        </format>
+        <drilldown>
+          <!-- Pass the BARE route value. The target dashboard's input carries
+               <prefix>route="</prefix> and applies it on arrival - sending a
+               pre-wrapped route="x" here would arrive as route="route="x"".
+               |u URL-encodes, which matters for the @ in time modifiers. -->
+          <link target="_blank">/app/kong_proxy_monitoring/kong_route_deep_dive?form.rt=$row.route|u$&amp;form.tr.earliest=$tr.earliest|u$&amp;form.tr.latest=$tr.latest|u$</link>
+        </drilldown>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ================= Row 4: traffic and status ================= -->
+  <row>
+    <panel>
+      <title>Traffic by status class</title>
+      <chart>
+        <search>
+          <query>`kong_base` | search $svc$ | search $rt$
+| timechart minspan=1m count by status_class</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="charting.fieldColors">{"2xx":"0x118832","3xx":"0x006D9C","4xx":"0xCBA700","5xx":"0xD41F1F","unknown":"0x888888"}</option>
+        <option name="charting.axisTitleY.text">Requests</option>
+      </chart>
+    </panel>
+
+    <panel>
+      <title>Upstream targets in rotation</title>
+      <html>
+        <p>A step down in distinct targets means a pod left the load-balancer pool - scaled down, failed its health check, or crashed. A drop to one target is a single point of failure.</p>
+      </html>
+      <chart>
+        <search>
+          <query>`kong_proxied` | search $svc$ | search $rt$
+| where isnotnull(upstream_ip)
+| timechart minspan=1m dc(upstream_ip) as targets</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.chart.nullValueMode">connect</option>
+        <option name="charting.axisTitleY.text">Distinct targets</option>
+        <option name="charting.legend.placement">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- ================= Row 5: top errors ================= -->
+  <row>
+    <panel>
+      <title>Top failing paths (4xx and 5xx)</title>
+      <table>
+        <search>
+          <query>`kong_base` | search $svc$ | search $rt$
+| where status&gt;=400
+| stats count as errors,
+        values(status) as codes,
+        sum(eval(if(error_source=="kong",1,0)))     as by_kong,
+        sum(eval(if(error_source=="upstream",1,0))) as by_upstream
+        by service, route, upstream_path
+| sort - errors | head 25</query>
+          <earliest>$tr.earliest$</earliest>
+          <latest>$tr.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+      </table>
+    </panel>
+  </row>
+</form>

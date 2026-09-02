@@ -1,0 +1,36 @@
+#
+# Kong Proxy Monitoring - object permissions
+#
+# Macros are exported to system scope deliberately: `kong_base` is useful from
+# the search bar in any app context, and restricting it to this app would mean
+# ad-hoc troubleshooting queries fail with "macro not found" unless the user
+# remembers to switch app first.
+#
+
+[]
+access = read : [ * ], write : [ admin, power ]
+export = system
+
+[macros]
+access = read : [ * ], write : [ admin, power ]
+export = system
+
+[eventtypes]
+access = read : [ * ], write : [ admin, power ]
+export = system
+
+[tags]
+access = read : [ * ], write : [ admin, power ]
+export = system
+
+[views]
+access = read : [ * ], write : [ admin, power ]
+export = system
+
+[savedsearches]
+access = read : [ * ], write : [ admin, power ]
+export = system
+
+[props]
+access = read : [ * ], write : [ admin ]
+export = system
