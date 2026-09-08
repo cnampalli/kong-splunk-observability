@@ -2,15 +2,18 @@
   <label>Kong Proxy - Service Health Overview</label>
   <description>Golden signals for vault-svc and admin-api, with Kong-vs-upstream error attribution. Start here during an incident. Every panel is built on the `kong_base` macro.</description>
 
-  <!-- Dropdowns are populated from the kong_topology KV Store collection,
-       maintained by the "Kong - Refresh Topology" scheduled search.
+  <!-- Dropdowns discover the topology with a live bounded search, via the
+       `kong_topology_source` macro in macros.conf. Deliberately NOT a KV Store
+       collection or a CSV lookup: a collection can only be created by
+       deploying an app or by a REST call, neither of which is reliably
+       available on a Splunk Cloud tenancy, and a missing one breaks every
+       dropdown. A live search has no such dependency.
 
-       inputlookup is a collection read on the search head, not an index scan,
-       so discovering the topology costs nothing at page load. A live
-       `kong_base` population search would scan the full selected time range
-       on every page load AND drop any route that happened to be silent in
-       that window - which is exactly the route you would be looking for. The
-       collection remembers entities for 30 days, so silent routes persist.
+       The macro pins its own 24h window - an input population search carries
+       no time range, so without that it would run over all time on every page
+       load. Cost is one bounded scan per dropdown; the trade is that a route
+       silent for over 24h is not listed. It still appears in every table
+       under "All routes".
 
        "*" and the "(no-...)" entries stay static: they are kong_base coalesce
        constants, not topology, so discovering them would be wrong. -->

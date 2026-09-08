@@ -2,14 +2,21 @@
   <label>Kong Proxy - Route and Latency Analysis</label>
   <description>Works at two scopes from one page. Leave Route on "All routes" for the cross-cutting latency view; pick a single route to drill into it. Reached from the Service Health Overview matrix, which passes the route through.</description>
 
-  <!-- Dropdowns are populated from the kong_topology KV Store collection,
-       maintained by the "Kong - Refresh Topology" scheduled search.
-       inputlookup is a collection read, not an index scan, so discovery costs
-       nothing at page load - and unlike a live population search, a route
-       that has gone silent stays selectable because the collection remembers
-       it for 30 days.
-       "*" and the "(no-...)" entries stay static: they are kong_base
-       constants, not topology. -->
+  <!-- Dropdowns discover the topology with a live bounded search, via the
+       `kong_topology_source` macro in macros.conf. Deliberately NOT a KV Store
+       collection or a CSV lookup: a collection can only be created by
+       deploying an app or by a REST call, neither of which is reliably
+       available on a Splunk Cloud tenancy, and a missing one breaks every
+       dropdown. A live search has no such dependency.
+
+       The macro pins its own 24h window - an input population search carries
+       no time range, so without that it would run over all time on every page
+       load. Cost is one bounded scan per dropdown; the trade is that a route
+       silent for over 24h is not listed. It still appears in every table
+       under "All routes".
+
+       "*" and the "(no-...)" entries stay static: they are kong_base coalesce
+       constants, not topology, so discovering them would be wrong. -->
   <fieldset submitButton="false" autoRun="true">
     <input type="time" token="tr">
       <label>Time range</label>

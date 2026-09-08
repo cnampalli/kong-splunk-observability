@@ -299,7 +299,9 @@ index=kong_common | stats max(_time) as last_event | eval last_event=strftime(la
 
 ## 13 — New Route Or Service Detected
 
-**Means:** a service or route is receiving traffic but is not in the `kong_topology` collection. Since that collection is refreshed hourly from live traffic, an entity missing from it appeared within the last hour. **Kong's configuration changed.**
+**Means:** a service or route carried traffic in the last 6 hours but none across the preceding 7 days. **Kong's configuration changed.**
+
+The baseline is computed inside the search by comparing the recent window against the previous week — there is no stored list to maintain, so this works on any Splunk with nothing installed.
 
 **Check, in order:**
 
@@ -318,4 +320,4 @@ index=kong_common | stats max(_time) as last_event | eval last_event=strftime(la
 
 **Expected during:** any deliberate Kong config change. Suppress during planned deployment windows rather than disabling — this alert is one of the few that gives independent confirmation that a config push did what was intended.
 
-**Note:** this alert self-resolves. Once `Kong - Refresh Topology` next runs, the new entity is in the collection and stops matching. That is why its suppression window is 120 minutes — long enough to avoid re-firing before the refresh catches up.
+**Note:** this alert self-resolves. Once the new entity has been carrying traffic for more than 6 hours it falls into the 7-day baseline window and stops matching. It runs every 6 hours rather than hourly because the subsearch scans a week — a config change does not need sub-hourly detection, and a 7-day scan every hour would be a poor trade.

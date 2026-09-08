@@ -112,7 +112,7 @@ Settings → Advanced search → Search macros → New Search Macro. For each, s
 | `kong_base` | **The foundation.** Normalises every field trap. |
 | `kong_proxied` | `kong_base` filtered to requests that reached the upstream. Use for all latency stats. |
 | `kong_min_requests` | `50` — minimum volume before a ratio alert may fire. Used by four alerts. |
-| `kong_topology_source` | Where dropdowns get their service/route list. **Swap this one macro to switch between the KV Store collection and a live search** — see [section 4.1](#41-create-the-topology-collection). |
+| `kong_topology_source` | Where dropdowns get their service/route list. A live bounded search — no stored state. Shorten its window here to cut page-load cost; see [section 4.1](#41-how-the-dropdowns-discover-your-topology). |
 | `kong_admin_service` | Which service fronts the Admin API. See [section 5](#5-install-the-dashboards). |
 | `kong_auth_route` | Which route handles Vault auth. |
 | `kong_ratelimited_route` | Which route carries the rate-limiting plugin. |
@@ -150,84 +150,29 @@ Then confirm the normalisation actually worked:
 
 - Every value must be a 3-digit code or blank. If you see `-` or `502, 200`, the `mvfilter` line did not paste correctly.
 
-### 4.1 Create the topology collection
+### 4.1 How the dropdowns discover your topology
 
-The dashboards populate their Service and Route dropdowns from a KV Store collection instead of scanning the index on every page load.
+**Nothing to install. This section is background — skip it unless a dropdown misbehaves.**
 
-> ### Splunk Web cannot create a KV Store collection
->
-> This is the single most likely thing to go wrong, so read it before doing anything. Creating a "KV Store lookup" through **Settings → Lookups → Lookup definitions** creates the lookup **definition** only. It does **not** create the backing collection. Point a definition at a collection that does not exist and every dropdown fails with:
->
-> ```
-> Lookup failed because collection kong_topology in the search head app
-> does not exist, or user does not have read access.
-> ```
->
-> A collection can only be created by `collections.conf` (i.e. by installing an app) or by a REST call. Pick one of the three paths below.
-
-**Path A — install the app (recommended, and the only fully self-contained option).**
-
-`collections.conf` and `transforms.conf` ship with the app, so the collection is created on restart or reload. Nothing to do here.
-
-**Important:** install the dashboards *into this app too*. A KV Store collection is app-scoped. If the dashboards live in `search` while the collection lives in `kong_proxy_monitoring`, you get the same error even though the collection exists. On Splunk Cloud, upload it as a private app.
-
-**Path B — create the collection by REST, then define the lookup in the UI.**
-
-For a self-managed instance where you can reach the management port:
-
-```bash
-curl -k -u admin:PASSWORD \
-  https://<search-head>:8089/servicesNS/nobody/search/storage/collections/config \
-  -d name=kong_topology \
-  -d field.service=string \
-  -d field.route=string \
-  -d field.requests=number \
-  -d field.last_seen=number
-```
-
-Note `.../servicesNS/nobody/**search**/...` — create it in the app your dashboards live in. Then:
-
-1. Settings → Lookups → Lookup definitions → New. Name `kong_topology`, type **KV Store**, collection `kong_topology`, supported fields `_key, service, route, requests, last_seen`.
-2. Permissions on the definition → **All apps**, Read: Everyone, Write: admin/power.
-
-**Path C — no collection at all.**
-
-If you cannot install an app and cannot reach the REST API, skip the collection entirely. Change one macro:
-
-```
-[kong_topology_source]
-definition = `kong_base` earliest=-24h latest=now | stats count by service, route
-```
-
-Dropdowns are still dynamic — they discover the real topology — but each page load costs one bounded 24-hour scan, and a route with no traffic in that window will not be listed. With this path you do not need `collections.conf`, `transforms.conf`, or the `Kong - Refresh Topology` search at all. Everything else in the pack is unaffected.
-
----
-
-**If you took Path A or B, run the refresh once** so the dropdowns populate immediately rather than at the top of the next hour:
+Every Service and Route selector is populated by the `kong_topology_source` macro, which runs a live bounded search:
 
 ```spl
-| savedsearch "Kong - Refresh Topology"
+`kong_base` earliest=-24h latest=now | stats count by service, route
 ```
 
-Then confirm:
+**No KV Store collection, no CSV lookup, no stored state of any kind.** That is deliberate. A KV Store collection can only be created by deploying an app or by a REST call, and on a Splunk Cloud tenancy neither is reliably available — a missing collection then breaks every dropdown with `collection ... does not exist`. A CSV lookup avoids that but gets bundled into the search bundle and replicated to the indexer tier on every search, and needs a writer to maintain it. A live search has no dependency at all: it works the moment the macro is defined, on any Splunk, with no filesystem access and no app install.
 
-```spl
-| inputlookup kong_topology
-```
+**The two pinned time bounds are load-bearing.** An input population search carries no time range of its own, so without an explicit `earliest`/`latest` this would run over *all time* on every page load. The 24-hour window bounds the cost regardless of what the page's own time picker is set to.
 
-You should get one row per live service/route pair.
+**What you are trading:**
 
-> **Why KV Store and not a CSV lookup.** A CSV lookup is bundled into the search bundle and replicated to the **indexer tier** on every search; a KV Store collection stays on the search head and is access-controlled per collection. For mutable state on Splunk Cloud, that is the deciding difference. KV Store also handles its own replication across search head cluster members — `outputlookup` against a CSV in an SHC relies on lookup replication and is a known source of write conflicts and stale reads.
+| | |
+|---|---|
+| Cost | One bounded 24h scan per dropdown, per page load. Two dropdowns on most dashboards. |
+| Blind spot | A route with **no traffic in the last 24 hours** is not listed. It still appears in every table under "All routes", and a genuinely silent route is what the `Kong - Route Traffic Stopped` alert exists to catch. |
+| Tuning | Shorten the window in the macro to cut cost (`-4h` is usually enough to see every active route); lengthen it to make longer-silent routes selectable. Cost scales with the window. |
 
-> **Security invariant — verify this, and re-verify it after any edit to the refresh search.**
-> ```spl
-> | inputlookup kong_topology | fields *
-> ```
-> The only columns must be `_key`, `service`, `route`, `requests`, `last_seen`. The refresh search is an aggregation — `| stats count by service, route` — and that shape is what guarantees client IPs, Vault namespaces, request paths, response headers and token index values **cannot** reach the collection, regardless of what is in the logs. It is a security control, not a convenience. Adding a field to that `BY` clause widens what gets persisted.
-
-> **Reassign the owner before handover.** `Kong - Refresh Topology` ships owned by whoever installs it. Owned by a person, it stops running when that person is deprovisioned, and the topology silently freezes with no error anywhere. Move it to a service account: Settings → Searches, reports and alerts → Edit → Reassign.
-
-`Kong - Refresh Topology` is the one scheduled object that ships **enabled** — it has no threshold to tune, and nothing works until it has run.
+**If the topology source breaks, the dashboards still work.** The static `All services` / `All routes` choices are declared in the XML and render regardless, so a failing dropdown degrades to an unfiltered dashboard rather than an unusable one.
 
 ---
 
@@ -271,7 +216,7 @@ If a role does not exist in your deployment, point the macro at something that m
 
 The Overview drills through to it when you click a row in the health matrix, passing both the service and the route. That link assumes the app context `kong_proxy_monitoring` — if you installed into a different app, edit the `<link>` element in `kong_service_health_overview.xml` to match.
 
-> **Dropdowns discover the topology; they do not assume it.** Every Service and Route selector is populated by `| inputlookup kong_topology`, reading the KV Store collection that [section 4.1](#41-create-the-topology-collection) sets up. That is a collection read on the search head, not an index scan — so discovery costs nothing at page load, unlike a live `kong_base` population search which would scan the full selected time range every time someone opened a dashboard. It also means a route that has gone silent stays selectable, because the collection remembers entities for 30 days, whereas a live search would drop exactly the route you were looking for. Add a route to Kong and it appears in the dropdowns within the hour. Only `*` and the `(no-service)` / `(no-route-matched)` entries are static, because those are `kong_base` constants rather than topology.
+> **Dropdowns discover the topology; they do not assume it.** Every Service and Route selector is populated by the `kong_topology_source` macro — a live search bounded to the last 24 hours, with no stored state to install or maintain. Add a route to Kong and it appears in the dropdowns as soon as it carries traffic. Only `*` and the `(no-service)` / `(no-route-matched)` entries are static, because those are `kong_base` constants rather than topology. See [section 4.1](#41-how-the-dropdowns-discover-your-topology) for the cost trade and how to tune the window.
 
 ---
 
@@ -279,7 +224,7 @@ The Overview drills through to it when you click a row in the health matrix, pas
 
 ### 6.1 Read this first
 
-**All thirteen alerts ship disabled (`disabled = 1`). That is deliberate.** (`Kong - Refresh Topology` is not an alert and ships enabled — see [section 4.1](#41-create-the-topology-collection).)
+**All thirteen alerts ship disabled (`disabled = 1`). That is deliberate.** Every scheduled object in this pack is an alert — there is no maintenance job to leave running.
 
 The thresholds come from the Kong config and general gateway norms, not from your traffic. Enabling all twelve untuned is how a monitoring rollout gets muted in its first fortnight. Work through [step 7](#7-tune-the-thresholds) first.
 
@@ -313,8 +258,7 @@ An alert with no mail server triggers and then silently fails to deliver — wor
 | 10 | Authentication Failure Spike | High | `6-59/10 * * * *` | 10m | ≥25 401/403 on auth-route |
 | 11 | Admin API Unexpected Activity | Critical | `*/10 * * * *` | 10m | Any Admin API 401/403, or ≥5 errors |
 | 12 | Log Ingestion Stalled | High | `*/5 * * * *` | 10m | Zero events |
-| 13 | New Route Or Service Detected | Medium | `27 * * * *` | 60m | Traffic from an entity absent from the topology collection |
-| — | **Refresh Topology** | — | `12 * * * *` | 70m | **Not an alert.** Maintains the dropdown collection, and is the one scheduled object that ships **enabled**. |
+| 13 | New Route Or Service Detected | Medium | `27 */6 * * *` | 6h | An entity carried traffic in the last 6h but none in the preceding 7 days |
 
 Schedules are staggered on purpose so twelve searches do not dispatch on the same minute.
 
@@ -468,27 +412,18 @@ Attribute every IP to a known workload. Add unexplained ones to the investigatio
 
 The macro is not installed, or not visible from the current app. Check Settings → Advanced search → Search macros, set the filter to "All", and confirm permissions are **Global / All apps**.
 
-### "Lookup failed because collection kong_topology ... does not exist, or user does not have read access"
+### "Lookup failed because collection ... does not exist, or user does not have read access"
 
-Affects the Service and Route **dropdowns only** — every panel still works, and the static "All services" / "All routes" choices still render, so the dashboard remains usable while you fix this.
+**You are on an older version of this pack.** It used to back the dropdowns with a KV Store collection. That has been removed: a collection can only be created by deploying an app or by a REST call, neither of which is reliably available on a Splunk Cloud tenancy, and a missing one broke every dropdown.
 
-There are two distinct causes. Find out which:
+Pull the current version, or just redefine one macro:
 
-```spl
-| rest /servicesNS/-/-/storage/collections/config
-| search title=kong_topology
-| table title, eai:acl.app, eai:acl.sharing
+```
+[kong_topology_source]
+definition = `kong_base` earliest=-24h latest=now | stats count by service, route
 ```
 
-**No rows — the collection was never created.** Almost always because it was set up through Settings → Lookups, which creates the lookup *definition* but not the collection. Splunk Web cannot create a collection. Fix via [section 4.1](#41-create-the-topology-collection) Path A or B.
-
-**A row, but `eai:acl.app` is not the app your dashboards are in.** KV Store collections are app-scoped, so a collection in `kong_proxy_monitoring` is not reachable from a dashboard saved in `search` — even when the lookup definition is shared globally. Either move the dashboards into the app that owns the collection, or recreate the collection in the app the dashboards live in. Check where a dashboard actually lives with:
-
-```spl
-| rest /servicesNS/-/-/data/ui/views | search title=kong_* | table title, eai:acl.app
-```
-
-**Blocked on both?** Take [section 4.1](#41-create-the-topology-collection) Path C — repoint the `kong_topology_source` macro at its live-search fallback. One edit, no collection required, dropdowns stay dynamic.
+Then delete `collections.conf`, `transforms.conf` and the `Kong - Refresh Topology` saved search if they exist. Nothing else references them.
 
 ### A dashboard is missing from the app menu but visible under Dashboards
 
@@ -513,9 +448,17 @@ The nav ships with an **"Other views"** collection (`<view source="unclassified"
 
 If everything looks correct and it is still missing, the nav is cached: visit `/debug/refresh` on the search head, or restart.
 
-### Dropdowns are empty but there is no error
+### Dropdowns show only "All services" / "All routes"
 
-The collection exists but has not been populated. Run `| savedsearch "Kong - Refresh Topology"` once, then check `| inputlookup kong_topology`. If that is still empty, the refresh search returned nothing — confirm `` `kong_base` `` itself returns rows over the last 70 minutes.
+Those two are static, so they render even when discovery finds nothing. Run the topology search on its own:
+
+```spl
+`kong_topology_source`
+```
+
+- **No rows** — there was no traffic in the last 24 hours, or `` `kong_base` `` itself is returning nothing. Check `` `kong_base` | head 5 `` first.
+- **Rows, but the dropdown is still bare** — the macro is not visible from the app the dashboard lives in. Settings → Advanced search → Search macros → Permissions → **All apps**.
+- **Rows, but a route you expect is missing** — it had no traffic in the window. Lengthen the window in the `kong_topology_source` macro, or select "All routes" and find it in the tables.
 
 ### Dashboards render but every panel is empty
 
@@ -613,11 +556,10 @@ Sign-off criteria. Tick every box.
 - [ ] `` `kong_base` | stats values(read_timeout_ms), values(max_retries) by service `` returns each service's **own** configured values, not one number for all
 - [ ] `` `kong_base` | stats max(try_count), values(max_retries) by service `` — `try_count` never exceeds `max_retries + 1`
 
-**Topology collection**
-- [ ] `| inputlookup kong_topology` returns one row per live service/route pair
-- [ ] **Security invariant:** `| inputlookup kong_topology | fields *` shows *only* `_key, service, route, requests, last_seen`
-- [ ] `Kong - Refresh Topology` is enabled, and reassigned to a service account
-- [ ] A route with no traffic in the last hour still appears in the dropdowns
+**Topology discovery**
+- [ ] `` `kong_topology_source` `` returns one row per live service/route pair
+- [ ] Every Service and Route dropdown lists your real services and routes, not a hardcoded set
+- [ ] No lookup, collection or scheduled maintenance job was needed to make that work
 
 **Dashboards**
 - [ ] All five load without a macro or parse error

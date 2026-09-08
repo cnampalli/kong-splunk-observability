@@ -36,34 +36,17 @@ access = read : [ * ], write : [ admin ]
 export = system
 
 # ---------------------------------------------------------------------------
-# kong_topology KV Store collection
+# NO LOOKUP OR COLLECTION PERMISSIONS HERE - THERE IS NOTHING TO PERMISSION.
 #
-# WRITE IS DELIBERATELY NARROWER THAN READ.
+# This pack deliberately stores no state. Dashboard dropdowns discover the
+# topology with a live bounded search (`kong_topology_source` in macros.conf)
+# rather than reading a KV Store collection or a CSV lookup.
 #
-# Read must be broad: every dashboard's Service and Route dropdown does
-# `| inputlookup kong_topology`, and a user who cannot read it gets empty
-# dropdowns with no error explaining why. The contents - service names, route
-# names, a count and a timestamp - are a strict subset of what any user with
-# access to index=kong_common could already derive by searching it directly,
-# so broad read grants nothing new.
+# That removes a whole class of deployment and permission failure: no
+# collection to create, nothing that needs app deployment on a Splunk Cloud
+# tenancy, no read grant that decides whether a dropdown populates, and no
+# persisted artefact to review for what it might contain.
 #
-# Write is restricted to admin and power. Only the "Kong - Refresh Topology"
-# scheduled search should ever write here. A user who can write to the
-# collection can inject route and service names into every dashboard's
-# dropdown, which is a (mild) integrity concern rather than a confidentiality
-# one - but there is no reason to allow it.
-#
-# To narrow read further, replace [ * ] with a specific role. The dashboards
-# will only work for members of that role.
-#
-# Note this is a KV Store collection, NOT a CSV lookup. A CSV lookup would be
-# bundled into the search bundle and replicated to the indexer tier on every
-# search; the collection stays on the search head. See collections.conf.
+# The macros above are the only objects that need to be visible, and they are
+# already exported to system scope.
 # ---------------------------------------------------------------------------
-[collections/kong_topology]
-access = read : [ * ], write : [ admin, power ]
-export = system
-
-[transforms/kong_topology]
-access = read : [ * ], write : [ admin ]
-export = system

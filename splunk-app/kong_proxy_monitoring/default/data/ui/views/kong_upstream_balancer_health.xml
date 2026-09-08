@@ -10,14 +10,21 @@
         <latest>now</latest>
       </default>
     </input>
-    <!-- Populated from the kong_topology KV Store collection, which the
-         "Kong - Refresh Topology" scheduled search maintains. inputlookup is
-         a collection read on the search head, NOT an index scan - so this
-         discovers the real topology without the per-page-load cost a live
-         kong_base search would incur, and a service that has gone quiet stays
-         selectable because the collection remembers it.
-         "*" and "(no-service)" are static because they are kong_base
-         constants, not topology - discovering them would be wrong. -->
+  <!-- Dropdowns discover the topology with a live bounded search, via the
+       `kong_topology_source` macro in macros.conf. Deliberately NOT a KV Store
+       collection or a CSV lookup: a collection can only be created by
+       deploying an app or by a REST call, neither of which is reliably
+       available on a Splunk Cloud tenancy, and a missing one breaks every
+       dropdown. A live search has no such dependency.
+
+       The macro pins its own 24h window - an input population search carries
+       no time range, so without that it would run over all time on every page
+       load. Cost is one bounded scan per dropdown; the trade is that a route
+       silent for over 24h is not listed. It still appears in every table
+       under "All routes".
+
+       "*" and the "(no-...)" entries stay static: they are kong_base coalesce
+       constants, not topology, so discovering them would be wrong. -->
     <input type="dropdown" token="svc" searchWhenChanged="true">
       <label>Service</label>
       <search>

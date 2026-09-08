@@ -21,9 +21,7 @@ kong-proxy-splunk/
         │   ├── app.conf
         │   ├── props.conf           # Field extraction (only needed if JSON isn't resolving)
         │   ├── macros.conf          # kong_base — everything depends on this
-        │   ├── collections.conf     # kong_topology KV Store collection (dropdown source)
-        │   ├── transforms.conf      # Exposes the collection to SPL as a lookup
-        │   ├── savedsearches.conf   # 13 alerts (ship DISABLED) + topology refresh (ships ENABLED)
+        │   ├── savedsearches.conf   # 13 alerts, all ship DISABLED (see below)
         │   ├── alert_actions.conf   # Email formatting
         │   └── data/ui/
         │       ├── nav/default.xml
@@ -56,9 +54,15 @@ No filesystem access (Splunk Cloud)? The dashboards are Simple XML and paste-imp
 | **Traffic, Rate Limiting and Clients** | Throttling, or a noisy client |
 | **Security and Tenancy** | Admin API audit, per-namespace, auth operations |
 
-**Dropdowns discover your topology rather than assuming it.** They read the `kong_topology` KV Store collection, maintained hourly by the `Kong - Refresh Topology` search. That is a collection read on the search head, not an index scan — so discovery is free at page load, unlike a live population search that would scan the full selected time range every time a dashboard opened. And because the collection remembers entities for 30 days, a route that has gone silent stays selectable, which a live search would drop precisely when you needed it.
+**Dropdowns discover your topology rather than assuming it** — and do so with **no stored state at all**. The `kong_topology_source` macro runs a live search bounded to the last 24 hours:
 
-KV Store rather than a CSV lookup deliberately: a CSV lookup is bundled into the search bundle and replicated to the **indexer tier** on every search, while the collection stays on the search head and is access-controlled per collection. The refresh search is `| stats count by service, route`, and that aggregation is a security control — only service names, route names, a count and a timestamp can reach the collection, never client IPs, Vault namespaces or request paths.
+```spl
+`kong_base` earliest=-24h latest=now | stats count by service, route
+```
+
+No KV Store collection, no CSV lookup, no maintenance job. That is deliberate: a collection can only be created by deploying an app or by a REST call, neither reliably available on a Splunk Cloud tenancy, and a missing one breaks every dropdown. A CSV lookup avoids that but gets replicated to the indexer tier on every search and needs a writer to maintain it. A live search works the moment the macro is defined, on any Splunk, with nothing installed.
+
+The trade is one bounded 24h scan per dropdown per page load, and a route silent for over 24h is not listed — it still appears in every table under "All routes". Shorten or lengthen the window in that one macro to move the trade either way.
 
 ## Alerts
 

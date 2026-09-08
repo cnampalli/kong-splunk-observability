@@ -10,10 +10,21 @@
         <latest>now</latest>
       </default>
     </input>
-    <!-- Populated from the kong_topology KV Store collection (see
-         "Kong - Refresh Topology"). A collection read, not an index scan.
-         "*" and "(no-route-matched)" stay static - they are kong_base
-         constants, not topology. -->
+  <!-- Dropdowns discover the topology with a live bounded search, via the
+       `kong_topology_source` macro in macros.conf. Deliberately NOT a KV Store
+       collection or a CSV lookup: a collection can only be created by
+       deploying an app or by a REST call, neither of which is reliably
+       available on a Splunk Cloud tenancy, and a missing one breaks every
+       dropdown. A live search has no such dependency.
+
+       The macro pins its own 24h window - an input population search carries
+       no time range, so without that it would run over all time on every page
+       load. Cost is one bounded scan per dropdown; the trade is that a route
+       silent for over 24h is not listed. It still appears in every table
+       under "All routes".
+
+       "*" and the "(no-...)" entries stay static: they are kong_base coalesce
+       constants, not topology, so discovering them would be wrong. -->
     <input type="dropdown" token="rt" searchWhenChanged="true">
       <label>Route</label>
       <search>
