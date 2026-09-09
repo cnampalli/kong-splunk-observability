@@ -252,7 +252,9 @@ Every Service and Route dropdown in all five dashboards reads one macro:
 
 ```
 [kong_topology_source]
-definition = `kong_base` earliest=-24h latest=now | stats count by service, route
+definition = search earliest=-24h latest=now `kong_base`
+| where service!="(no-service)" AND route!="(no-route-matched)"
+| stats count by service, route
 ```
 
 **Design decision (DD-3): live bounded search, not KV Store, not CSV lookup.**
@@ -595,7 +597,7 @@ The 13 alerts are instances of five patterns. Recognising the pattern is how you
 ```
 `kong_base`                                             ← current window
 | stats count as current by route
-| append [ search `kong_base` earliest=-25h@h latest=-1h@h    ← baseline window
+| append [ search earliest=-25h@h latest=-1h@h `kong_base`    ← baseline window
            | bin _time span=15m
            | stats count as c by _time, route
            | stats avg(c) as baseline_per_15m by route ]

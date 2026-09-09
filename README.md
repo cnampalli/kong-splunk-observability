@@ -78,7 +78,9 @@ No filesystem access (Splunk Cloud)? The dashboards are Simple XML and paste-imp
 **Dropdowns discover your topology rather than assuming it** — and do so with **no stored state at all**. The `kong_topology_source` macro runs a live search bounded to the last 24 hours:
 
 ```spl
-`kong_base` earliest=-24h latest=now | stats count by service, route
+search earliest=-24h latest=now `kong_base`
+| where service!="(no-service)" AND route!="(no-route-matched)"
+| stats count by service, route
 ```
 
 No KV Store collection, no CSV lookup, no maintenance job. That is deliberate: a collection can only be created by deploying an app or by a REST call, neither reliably available on a Splunk Cloud tenancy, and a missing one breaks every dropdown. A CSV lookup avoids that but gets replicated to the indexer tier on every search and needs a writer to maintain it. A live search works the moment the macro is defined, on any Splunk, with nothing installed.

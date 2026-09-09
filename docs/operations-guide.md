@@ -157,7 +157,9 @@ Then confirm the normalisation actually worked:
 Every Service and Route selector is populated by the `kong_topology_source` macro, which runs a live bounded search:
 
 ```spl
-`kong_base` earliest=-24h latest=now | stats count by service, route
+search earliest=-24h latest=now `kong_base`
+| where service!="(no-service)" AND route!="(no-route-matched)"
+| stats count by service, route
 ```
 
 **No KV Store collection, no CSV lookup, no stored state of any kind.** That is deliberate. A KV Store collection can only be created by deploying an app or by a REST call, and on a Splunk Cloud tenancy neither is reliably available — a missing collection then breaks every dropdown with `collection ... does not exist`. A CSV lookup avoids that but gets bundled into the search bundle and replicated to the indexer tier on every search, and needs a writer to maintain it. A live search has no dependency at all: it works the moment the macro is defined, on any Splunk, with no filesystem access and no app install.
@@ -420,7 +422,9 @@ Pull the current version, or just redefine one macro:
 
 ```
 [kong_topology_source]
-definition = `kong_base` earliest=-24h latest=now | stats count by service, route
+definition = search earliest=-24h latest=now `kong_base`
+| where service!="(no-service)" AND route!="(no-route-matched)"
+| stats count by service, route
 ```
 
 Then delete `collections.conf`, `transforms.conf` and the `Kong - Refresh Topology` saved search if they exist. Nothing else references them.
