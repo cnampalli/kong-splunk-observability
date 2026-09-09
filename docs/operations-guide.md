@@ -579,3 +579,5 @@ Sign-off criteria. Tick every box.
 - [ ] On-call knows to open Service Health Overview first
 - [ ] On-call understands `error_source` = kong vs upstream
 - [ ] Open items in [log-format-validation.md](log-format-validation.md) assigned to someone
+- [ ] Go-live blockers in [logging-monitoring-design.md](logging-monitoring-design.md) section 13.2 closed — in particular the contact register and the `action.email.to` values
+- [ ] On-call knows which failure modes are **not** covered ([logging-monitoring-design.md](logging-monitoring-design.md) section 5.9)

@@ -580,3 +580,4 @@ Generate most of that with one search:
 | [app-team-guide.md](app-team-guide.md) | For application teams checking their own route |
 | [field-reference.md](field-reference.md) | Writing your own searches |
 | [operations-guide.md](operations-guide.md) | Installing and tuning the Splunk pack |
+| [logging-monitoring-design.md](logging-monitoring-design.md) | Why a threshold is that number, why an alert exists, and what this pack deliberately does **not** detect |

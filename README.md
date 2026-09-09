@@ -19,7 +19,10 @@ kong-proxy-splunk/
 │   │  ── for whoever installs it ──
 │   ├── operations-guide.md          # Install and tune the Splunk pack
 │   ├── log-format-validation.md     # Your log format vs the official Kong 3.4 contract
-│   └── field-reference.md           # Splunk field map + the SPL traps this data sets
+│   ├── field-reference.md           # Splunk field map + the SPL traps this data sets
+│   │  ── for whoever reviews or extends it ──
+│   └── logging-monitoring-design.md # The detailed design: metrics, thresholds,
+│                                    # alerting model, escalation, design decisions
 └── splunk-app/
     └── kong_proxy_monitoring/       # Drop into $SPLUNK_HOME/etc/apps/
         ├── default/
@@ -43,6 +46,7 @@ kong-proxy-splunk/
 | **New to Kong or Splunk** | [kong-primer-for-ops.md](docs/kong-primer-for-ops.md) — both explained from zero. Read before your first incident, not during it. |
 | **An application team with a route on Kong** | [app-team-guide.md](docs/app-team-guide.md) — check your own service, work out if it is you or the gateway |
 | **Installing this pack** | [operations-guide.md](docs/operations-guide.md) |
+| **Reviewing, extending or signing off the design** | [logging-monitoring-design.md](docs/logging-monitoring-design.md) — the metric catalogue, alerting model, threshold derivation, escalation design and the decisions behind them |
 
 ---
 
