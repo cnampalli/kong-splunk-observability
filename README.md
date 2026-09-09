@@ -11,8 +11,13 @@ Built to answer the first question of any gateway incident: **is Kong broken, or
 ```
 kong-proxy-splunk/
 ├── docs/
-│   ├── operations-guide.md          # START HERE to install. Configure Splunk from scratch.
-│   ├── alert-runbook.md             # Per-alert triage: what fired, what to check
+│   │  ── for the operations team ──
+│   ├── triage-guide.md              # SOMETHING IS BROKEN, START HERE. Symptom-driven.
+│   ├── alert-runbook.md             # An alert fired: what it means, what to check
+│   ├── kong-primer-for-ops.md       # Kong + Splunk from zero. Read once, before an incident.
+│   ├── app-team-guide.md            # For teams whose app is onboarded via a route
+│   │  ── for whoever installs it ──
+│   ├── operations-guide.md          # Install and tune the Splunk pack
 │   ├── log-format-validation.md     # Your log format vs the official Kong 3.4 contract
 │   └── field-reference.md           # Splunk field map + the SPL traps this data sets
 └── splunk-app/
@@ -28,6 +33,18 @@ kong-proxy-splunk/
         │       └── views/           # 5 Simple XML dashboards
         └── metadata/default.meta
 ```
+
+## Which document do I need?
+
+| You are | Read |
+|---|---|
+| **On call, something is broken right now** | [triage-guide.md](docs/triage-guide.md) — symptom-driven, starts with a 3-minute triage that decides most incidents |
+| **Responding to a specific alert** | [alert-runbook.md](docs/alert-runbook.md) — one section per alert |
+| **New to Kong or Splunk** | [kong-primer-for-ops.md](docs/kong-primer-for-ops.md) — both explained from zero. Read before your first incident, not during it. |
+| **An application team with a route on Kong** | [app-team-guide.md](docs/app-team-guide.md) — check your own service, work out if it is you or the gateway |
+| **Installing this pack** | [operations-guide.md](docs/operations-guide.md) |
+
+---
 
 ## Quick start
 
